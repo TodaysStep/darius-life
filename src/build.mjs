@@ -69,8 +69,10 @@ function renderItem(item, ctx) {
       const tail =
         item.dynamic === "status"
           ? ` <span data-dynamic="status">${esc(ctx.status.personal)}</span>`
-          : inline(item.note ?? "");
-      return `<p class="indicator" ${id}>${label()}${tail}</p>`;
+          : inline(item.note ?? "").replace(/\n/g, "<br>");
+      const led = `<span class="led led-green" aria-hidden="true"></span>`;
+      const lock = item.icon === "lock" ? `<span class="lock" aria-hidden="true"></span>` : "";
+      return `<p class="indicator" ${id}>${led}${lock}${label()}${tail}</p>`;
     }
     case "prose":
       return `<div class="prose" ${id}>\n${renderBlocks(read(item.source))}\n</div>`;
@@ -87,7 +89,9 @@ function renderItem(item, ctx) {
       let state = "";
       if (item.dynamic === "project") {
         const s = ctx.projects[item.id.slice("projects.".length)];
-        state = ` <span class="state" data-dynamic="project">Status: ${s === "paused" ? "Paused" : s === "active" ? "Active" : esc(String(s))}</span>`;
+        const cls = s === "paused" ? "led-grey" : "led-green";
+        const word = s === "paused" ? "Paused" : s === "active" ? "Active" : esc(String(s));
+        state = ` <span class="state" data-dynamic="project"><span class="led ${cls}" aria-hidden="true"></span> ${word}</span>`;
       }
       return `<span ${id}>${label()}${note}${state}</span>`;
     }

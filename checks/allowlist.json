@@ -23,15 +23,19 @@
     "https://livinginstruments.com/press/media-kit",
     "https://livinginstruments.com/living-instruments/public/how-we-work",
     "https://livinginstruments.com/legal/honest-reading-terms",
-    "mailto:homecorrespondence@darius.life?subject=Donation",
+    "https://smallstep.ventures/donate",
     "https://livinginstruments.com/living-instruments/public/operating-model",
     "https://posterityos.com/posterity/1.0/en/contents",
     "https://dreamstep.education",
     "https://darius.medium.com/design-educators-in-exile-the-forgotten-architects-of-civic-stability-836f51f6112b",
-    "https://newsletter.todaysstep.com/archive"
+    "https://newsletter.todaysstep.com/archive",
+    "https://songsketch.app",
+    "https://napkinsketch.app",
+    "https://napkinsketch.studio",
+    "https://dreamstep.engineering",
+    "https://loxmusic.com",
+    "https://foundingrecord.org"
   ],
   "verify": ["/terms.txt", "/terms.sha256"],
-  "mailto": [
-    "homecorrespondence@darius.life"
-  ]
+  "mailto": []
 }

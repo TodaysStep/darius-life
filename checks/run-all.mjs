@@ -33,6 +33,9 @@ legal.identity-distortion,
 projects.blurb, projects.living-instruments, projects.todays-notes,
 projects.small-step-ventures, projects.memorial-song, projects.meaning-preservation,
 projects.dreamstep-press, projects.li-press, projects.hands-on, projects.honest-reading,
+projects.songsketch, projects.napkinsketch, projects.business-studio, projects.todays-step,
+projects.founder-notes, projects.dreamstep-education, projects.dreamstep-engineering,
+projects.lox, projects.posterity-cloud, projects.founding-record,
 help.blurb, help.donate, help.food, help.meals-on-wheels, help.founders-letter,
 writing.blurb, writing.thesis, writing.dreamstep, writing.educators-exile-1,
 writing.todays-step-archive,
@@ -41,6 +44,11 @@ footer.press, footer.updated, footer.copyright`
   .filter(Boolean);
 
 const PAGE_ORDER = ["identity", "status", "resume", "terms", "notes", "legal", "projects", "help", "writing", "footer"];
+
+// The exact status-LED colours used in src/styles.css — kept here too so check 14
+// can allow precisely these and nothing else.
+const LED_GREEN = "#1E8E3E";
+const LED_GREY = "#8C8C8C";
 
 const DESCRIPTION =
   "Design founder. Built the iTunes Music Store and Apple's early cloud services at Apple. Now building Living Instruments and helping others build their own ventures through Small Step Ventures.";
@@ -320,7 +328,7 @@ await check(10, "Status vocabulary", () => {
   const shown = doc.querySelector('[data-dynamic="status"]')?.textContent;
   if (shown !== status.personal) p.push(`page shows status "${shown}" instead of "${status.personal}"`);
   for (const id of projectIds) {
-    const want = projects[id] === "paused" ? "Status: Paused" : "Status: Active";
+    const want = projects[id] === "paused" ? "Paused" : "Active";
     const got = doc.querySelector(`[data-id="projects.${id}"] [data-dynamic="project"]`)?.textContent.replace(/\s+/g, " ").trim();
     if (got !== want) p.push(`projects.${id} shows "${got}" instead of "${want}"`);
   }
@@ -389,8 +397,14 @@ await check(14, "Accessibility", async () => {
   const css = read("src/styles.css");
   const colors = [...css.matchAll(/(?<![-\w])color\s*:\s*([^;]+);/g)].map((m) => m[1].trim().toUpperCase());
   const backgrounds = [...css.matchAll(/background(?:-color)?\s*:\s*([^;]+);/g)].map((m) => m[1].trim().toUpperCase());
+  // The two status-LED colours (green/grey) and the page's own text colour used as a
+  // fill (the lock glyph, the LED dots) are the one deliberate, explicit exception to
+  // the page's two-colour budget — approved per the LED status-indicator requirement.
+  // Every LED and the lock icon still carries its state in visible text right beside
+  // it, so colour is never the only way the status is conveyed (WCAG 1.4.1).
+  const LED_EXCEPTIONS = ["#111111", LED_GREEN, LED_GREY];
   if (colors.some((c) => c !== "#111111")) p.push(`text colours other than #111111: ${[...new Set(colors)].join(", ")}`);
-  if (backgrounds.some((c) => c !== "#F6F3EE")) p.push(`backgrounds other than #F6F3EE: ${[...new Set(backgrounds)].join(", ")}`);
+  if (backgrounds.some((c) => c !== "#F6F3EE" && !LED_EXCEPTIONS.includes(c))) p.push(`backgrounds other than #F6F3EE or an approved LED colour: ${[...new Set(backgrounds)].join(", ")}`);
   const ratio = contrast("#111111", "#F6F3EE");
   if (ratio < 7) p.push(`contrast ${ratio.toFixed(2)}:1 is below 7:1`);
   if (!/a:focus-visible\s*\{[^}]*outline:\s*2px solid #111111/.test(css)) p.push("links need a visible focus outline");

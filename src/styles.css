@@ -98,19 +98,77 @@ a:focus-visible {
   display: flex;
   flex-wrap: wrap;
   column-gap: 3ch;
-  row-gap: 0.2em;
+  row-gap: 0.6em;
   margin: 0 0 1.5em;
   font-size: 0.88em;
 }
 
 .indicators p {
   margin: 0;
+  max-width: 46ch;
 }
 
 .state {
   font-size: 0.88em;
   margin-left: 1ch;
   white-space: nowrap;
+}
+
+/* Status LEDs: a small lit, glowing dot — green for on/active, grey for paused.
+   Each one always sits beside plain text naming the same state, so colour is
+   never the only way a status is conveyed. */
+.led {
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  margin-right: 0.4em;
+  border-radius: 50%;
+  vertical-align: -0.05em;
+}
+
+.led-green {
+  background: #1E8E3E;
+  box-shadow: 0 0 0.45em 0.08em rgba(30, 142, 62, 0.65);
+}
+
+.led-grey {
+  background: #8C8C8C;
+  box-shadow: 0 0 0.35em 0.06em rgba(140, 140, 140, 0.45);
+}
+
+/* A small CSS-only padlock — no image, no inline SVG (the page allows neither) —
+   for New Work Security Protection, which cannot be turned off. */
+.lock {
+  display: inline-block;
+  position: relative;
+  width: 0.75em;
+  height: 0.55em;
+  margin: 0 0.3em 0 0.05em;
+  vertical-align: -0.02em;
+}
+
+.lock::before {
+  content: "";
+  position: absolute;
+  top: -0.38em;
+  left: 0.11em;
+  width: 0.53em;
+  height: 0.5em;
+  border: 0.09em solid #111111;
+  border-bottom: none;
+  border-radius: 0.3em 0.3em 0 0;
+  box-sizing: border-box;
+}
+
+.lock::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0.75em;
+  height: 0.48em;
+  background: #111111;
+  border-radius: 0.09em;
 }
 
 ul {
