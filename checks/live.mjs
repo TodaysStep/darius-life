@@ -116,12 +116,20 @@ await check("/verify shows the same hash and effective date (acceptance 3)", asy
 // -------------------------------------------------------------- acceptance 5 + 6: the private area
 await check('/legal/private/ requires Access login — denies an unauthenticated request (acceptance 5)', async () => {
   const r = await fetchOnce(`${PUBLIC}/legal/private/`, "manual");
+  // A non-200 here is only proof of gating if the request actually reached the
+  // Worker at all. If the domain isn't proxied (or the Worker's route isn't
+  // attached), GitHub Pages answers its own generic 404 directly — which also
+  // isn't 200, and would otherwise look like a pass despite the Worker never
+  // having been asked. cf-ray only appears on a response that passed through
+  // Cloudflare, so its absence is what actually distinguishes the two.
+  if (!r.headers.get("cf-ray")) return ["no cf-ray header — request never reached Cloudflare/the Worker, so this proves nothing about gating (see acceptance 1)"];
   if (r.status === 200) {
     const body = await r.text();
     if (/ACTIVE LEGAL PROCEEDINGS/i.test(body)) return ["served the real page with no Access login — NOT gated"];
   }
-  // 302/403 to the Access login, or any non-200, counts as gated. This cannot verify
-  // that an ALLOWED email succeeds — that needs a real authenticated session.
+  // 302/403 to the Access login, or any other non-200 once cf-ray confirms the
+  // Worker was actually asked, counts as gated. This still cannot verify that an
+  // ALLOWED email succeeds — that needs a real authenticated session.
   return [];
 });
 
