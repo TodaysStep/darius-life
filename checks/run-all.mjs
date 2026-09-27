@@ -18,6 +18,9 @@ if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
+// Separate build, separate host (Cloudflare Pages, confidential.darius.life, behind
+// Access) — never nested inside DIST, so never reachable from GitHub Pages.
+const DIST_CONFIDENTIAL = path.join(ROOT, "dist-confidential");
 const CI = process.env.CF_PAGES === "1" || process.env.CI === "true";
 const rel = (p) => path.relative(ROOT, p);
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
@@ -61,6 +64,13 @@ const REQUIRED_HEADERS = {
   "X-Frame-Options": "DENY",
 };
 
+// GitHub Pages sends no HTTP response headers at all. Of REQUIRED_HEADERS, only these
+// two have a <meta> equivalent — frame-ancestors/HSTS/nosniff/Permissions-Policy/
+// X-Frame-Options do not (the CSP spec itself ignores frame-ancestors, form-action and
+// base-uri when delivered via <meta>). See docs/github-pages-header-limits.md.
+const META_CSP = "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'";
+const META_REFERRER = "no-referrer";
+
 const UA = "Mozilla/5.0 (compatible; darius-life-linkcheck/1.0; +https://darius.life)";
 // Cloudflare bot walls: either flagged by header, or a block page served by Cloudflare itself.
 async function isChallenge(r) {
@@ -91,11 +101,13 @@ if (!fs.existsSync(indexFile)) {
 }
 const doc = loadDom(indexFile);
 const verifyDoc = fs.existsSync(verifyFile) ? loadDom(verifyFile) : null;
-const distFiles = walkFiles(DIST);
+const publicFiles = walkFiles(DIST);
+const confidentialFiles = fs.existsSync(DIST_CONFIDENTIAL) ? walkFiles(DIST_CONFIDENTIAL) : [];
+if (!confidentialFiles.length) console.warn("checks: dist-confidential/ is missing or empty — run `node src/build.mjs` first");
+const distFiles = [...publicFiles, ...confidentialFiles]; // both targets, for the checks that must hold everywhere
 const htmlFiles = distFiles.filter((f) => f.endsWith(".html"));
+const confidentialHtmlFiles = confidentialFiles.filter((f) => f.endsWith(".html"));
 const textFiles = distFiles.filter((f) => TEXT_EXT.has(path.extname(f)) || path.basename(f).startsWith("_"));
-const privateDir = path.join(DIST, "legal/private");
-const isPrivate = (f) => f.startsWith(privateDir + path.sep);
 const termsTxt = fs.existsSync(path.join(DIST, "terms.txt")) ? fs.readFileSync(path.join(DIST, "terms.txt"), "utf8") : null;
 const termsLock = read("terms.lock").trim();
 const byId = (id) => doc.querySelectorAll(`[data-id="${id}"]`);
@@ -331,7 +343,7 @@ await check(7, "Destination allowlist", () => {
       if (tag === "a" ? !allow.verify.includes(href) : !RESOURCES.test(href)) p.push(`verify/index.html: <${tag}> destination not allowed: ${href}`);
     }
   }
-  for (const f of htmlFiles.filter(isPrivate)) {
+  for (const f of confidentialHtmlFiles) {
     for (const [tag, href] of hrefsOf(loadDom(f))) {
       const ok = tag === "a" ? /^\.\/[^/]+$/.test(href) && fs.existsSync(path.join(path.dirname(f), decodeURIComponent(href))) : RESOURCES.test(href);
       if (!ok) p.push(`${rel(f)}: <${tag}> destination not allowed: ${href}`);
@@ -427,14 +439,32 @@ await check(12, "No tracking", () => {
   const p = [];
   const TRACKERS = /cloudflareinsights|beacon\.min\.js|googletagmanager|google-analytics|gtag\(|plausible|fathom|umami|matomo|segment\.io|hotjar|facebook\.net|pixel/i;
   for (const f of textFiles) if (TRACKERS.test(fs.readFileSync(f, "utf8"))) p.push(`${rel(f)} references a tracker`);
-  if (/set-cookie/i.test(read("public/_headers"))) p.push("_headers sets a cookie");
+  if (/set-cookie/i.test(read("confidential-site/_headers"))) p.push("confidential-site/_headers sets a cookie");
   return p;
 });
 
 // ---------------------------------------------------------------- 13
+// Two targets, two hosts, two enforcement mechanisms: GitHub Pages sends no HTTP
+// response headers at all (checked via <meta>, the only thing that reaches it),
+// Cloudflare Pages does (checked via _headers, as before).
 await check(13, "Security headers", () => {
   const p = [];
-  for (const file of ["public/_headers", "dist/_headers"]) {
+  for (const doc_ of [
+    [doc, "index.html"],
+    [verifyDoc, "verify/index.html"],
+  ]) {
+    const [d, name] = doc_;
+    if (!d) continue;
+    const csp = d.querySelector('meta[http-equiv="Content-Security-Policy" i]')?.getAttribute("content");
+    if (csp !== META_CSP) p.push(`${name}: meta CSP must be exactly "${META_CSP}" (found ${csp ? `"${csp}"` : "nothing"})`);
+    const ref = d.querySelector('meta[name="referrer" i]')?.getAttribute("content");
+    if (ref !== META_REFERRER) p.push(`${name}: <meta name="referrer"> must be "${META_REFERRER}" (found ${ref ? `"${ref}"` : "nothing"})`);
+  }
+  if (!/^Allow: \/$/m.test(read("public/robots.txt")) || /Disallow/.test(read("public/robots.txt"))) {
+    p.push("public/robots.txt must allow everything (the public page has nothing to hide)");
+  }
+
+  for (const file of ["confidential-site/_headers", "dist-confidential/_headers"]) {
     if (!fs.existsSync(path.join(ROOT, file))) {
       p.push(`${file} missing`);
       continue;
@@ -453,9 +483,10 @@ await check(13, "Security headers", () => {
     for (const [k, v] of Object.entries(REQUIRED_HEADERS)) {
       if (all[k.toLowerCase()] !== v) p.push(`${file}: "/*" must set ${k}: ${v} (found ${all[k.toLowerCase()] ?? "nothing"})`);
     }
-    if (!/noindex/i.test(rules["/legal/private/*"]?.["x-robots-tag"] ?? "")) p.push(`${file}: /legal/private/* must send X-Robots-Tag: noindex`);
+    if (!/noindex/i.test(all["x-robots-tag"] ?? "")) p.push(`${file}: "/*" must send X-Robots-Tag: noindex`);
+    if (!/no-store/i.test(all["cache-control"] ?? "")) p.push(`${file}: "/*" must send Cache-Control: no-store`);
   }
-  if (!/^Disallow: \/legal\/private\/$/m.test(read("public/robots.txt"))) p.push("robots.txt must disallow /legal/private/");
+  if (!/^Disallow: \/$/m.test(read("confidential-site/robots.txt"))) p.push("confidential-site/robots.txt must disallow everything");
   return p;
 });
 

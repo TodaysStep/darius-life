@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
+// A separate top-level output, deployed as its own Cloudflare Pages project on
+// confidential.darius.life, gated by Cloudflare Access. It is never nested
+// inside DIST, so it can never be copied to GitHub Pages by mistake.
+const DIST_CONFIDENTIAL = path.join(ROOT, "dist-confidential");
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const readJSON = (p) => JSON.parse(read(p));
 const sha256 = (s) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
@@ -184,15 +188,26 @@ export function build() {
   fs.copyFileSync(path.join(ROOT, "src/styles.css"), path.join(DIST, "styles.css"));
   fs.cpSync(path.join(ROOT, "public"), DIST, { recursive: true });
   fs.cpSync(path.join(ROOT, "assets"), path.join(DIST, "assets"), { recursive: true });
-  buildPrivateArea();
+  // GitHub Pages' custom domain: committed here, not left to only the Settings UI
+  // field, so a future re-deploy of the Pages site can't lose it. GitHub auto-
+  // redirects www to whichever domain is named here.
+  fs.writeFileSync(path.join(DIST, "CNAME"), "darius.life\n");
+  buildConfidentialArea();
   return { manifest, termsText, termsHash };
 }
 
-// Files placed in legal/private/ publish under /legal/private/, behind Cloudflare Access.
-function buildPrivateArea() {
-  const src = path.join(ROOT, "legal/private");
-  const dest = path.join(DIST, "legal/private");
+// Files placed in legal/confidential/ publish at the root of dist-confidential/, a
+// separate build deployed to its own Cloudflare Pages project on
+// confidential.darius.life, gated by Cloudflare Access. This directory is never
+// copied into DIST, so it can never reach GitHub Pages, which has no access control.
+function buildConfidentialArea() {
+  const src = path.join(ROOT, "legal/confidential");
+  const dest = DIST_CONFIDENTIAL;
+  fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "src/styles.css"), path.join(dest, "styles.css"));
+  fs.cpSync(path.join(ROOT, "assets"), path.join(dest, "assets"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "confidential-site"), dest, { recursive: true });
   const files = fs.existsSync(src)
     ? fs.readdirSync(src).filter((f) => !f.startsWith(".") && f !== "index.html").sort()
     : [];
@@ -204,7 +219,7 @@ function buildPrivateArea() {
   const list = files.length
     ? `<ul>\n${files.map((f) => `<li><a href="./${escAttr(encodeURIComponent(f))}">${esc(f)}</a></li>`).join("\n")}\n</ul>`
     : "<p>No documents have been placed here.</p>";
-  fs.writeFileSync(path.join(dest, "index.html"), read("src/private.html").replace("{{LIST}}", list));
+  fs.writeFileSync(path.join(dest, "index.html"), read("src/confidential.html").replace("{{LIST}}", list));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

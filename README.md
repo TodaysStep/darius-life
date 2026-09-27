@@ -1,10 +1,24 @@
 # darius.life
 
 Michael Darius's personal index. Plain static HTML, built by `src/build.mjs`
-from `content/manifest.json` and checked by `checks/run-all.mjs`. Cloudflare
-Pages runs `npm run build`; if any check fails, nothing deploys.
+from `content/manifest.json` and checked by `checks/run-all.mjs`. `npm run
+build` runs both; if any check fails, nothing deploys.
 
-This repository must stay private: files in `legal/private/` live here.
+**Two builds, two hosts, deliberately.** Nothing on the public page is secret —
+only the confidential legal area needs real access control, and GitHub Pages
+cannot provide that (see "Hosting" below). So `src/build.mjs` writes two
+separate outputs from one source repo:
+
+| | public page | confidential legal area |
+|---|---|---|
+| output | `dist/` | `dist-confidential/` |
+| source | everything except `legal/confidential/` | `legal/confidential/` |
+| host | GitHub Pages | Cloudflare Pages + Access |
+| bill this depends on | none — a different company, free forever | Cloudflare Pages itself is also free; only the account it's on needs to stay in good standing |
+
+This repository does not need to be private — nothing in `dist/` is secret. It
+stays private anyway because `legal/confidential/` (documents you place there,
+never the built site) does.
 
 ## Change your status
 
@@ -15,12 +29,12 @@ This repository must stay private: files in `legal/private/` live here.
    - `Surfacing soon.`
    - `Between projects, more reachable than usual.`
    - `Handling something. Will update when there's something to say.`
-2. Commit. Cloudflare Pages rebuilds and publishes it.
+2. Commit and push. GitHub Actions rebuilds and publishes it.
 
 ## Pause or resume a project
 
 1. Edit `data/projects.json` and set the project to `"paused"` or `"active"`.
-2. Commit. The page shows `○ Paused` or `● Active` beside that project.
+2. Commit and push. The page shows `○ Paused` or `● Active` beside that project.
 
 These two files are the only content that changes without changing a lock file.
 
@@ -54,50 +68,85 @@ fetching it. The build accepts a Medium link only when the post is listed in
 proof for that exact URL. The feed holds the ten newest posts, so a new article
 passes on its own; an older one needs a recorded proof.
 
-## The private legal area
+## The confidential legal area
 
-Put documents in `legal/private/`. They publish under `/legal/private/`, which
-Cloudflare Access protects (one-time PIN to the addresses in the Access policy).
-The build writes an index page listing them unless you provide `index.html`.
-They are never linked from the public page, never indexed, and sent with
-`Cache-Control: private, no-store`.
+Put documents in `legal/confidential/`. They build into `dist-confidential/`,
+a completely separate output that Cloudflare Pages deploys to
+`confidential.darius.life`, behind Cloudflare Access (one-time PIN to the
+addresses in the Access policy). They are never copied into `dist/`, so they
+can never reach GitHub Pages, which has no access control at all. The build
+writes an index page listing them unless you provide `index.html`. Every
+response from that host sends `Cache-Control: private, no-store` and
+`X-Robots-Tag: noindex`.
 
-The build refuses to publish if your mailing address or phone number (the
-`PROTECTED_STRINGS` secret) appears in any output file, including this folder.
-A document that must contain them cannot be placed here as-is. Text inside
-compressed PDF streams cannot be read by the check.
+The build refuses to publish (either target) if your mailing address or phone
+number (the `PROTECTED_STRINGS` secret) appears in any output file. A document
+that must contain them cannot be placed here as-is. Text inside compressed PDF
+streams cannot be read by the check.
 
 ## Checks
 
-`npm run build` runs all sixteen requirements in Section 8 of the brief. Locally:
+`npm run build` runs all sixteen requirements in Section 8 of the brief, against
+both outputs. Locally:
 
-- `LINKCHECK=skip npm run build` skips fetching links (never on Cloudflare).
-- Without `PROTECTED_STRINGS` set, check 9 is skipped locally and fails on
-  Cloudflare.
+- `LINKCHECK=skip npm run build` skips fetching live links. Both CI providers
+  (GitHub Actions and Cloudflare Pages) set `CI`/`CF_PAGES`, which the check
+  detects and always fetches every link regardless of `LINKCHECK` — the skip
+  only ever applies to a local run.
+- Without `PROTECTED_STRINGS` set, check 9 is skipped locally and fails under
+  either CI provider.
 
 ## Hosting
 
-Cloudflare Pages project `darius-life`: production branch `main`, build command
-`npm run build`, output `dist`, Node 20 (`.node-version`). Secret:
-`PROTECTED_STRINGS` (production and preview), one string per line.
+**Public page — GitHub Pages, via GitHub Actions** (`.github/workflows/pages.yml`).
+Repo Settings → Pages → Source: **GitHub Actions**. No Cloudflare product is
+involved in serving this page at all. Add repo secret `PROTECTED_STRINGS` (same
+value as the Cloudflare one below) so the workflow can run check 9.
 
-### Domains and redirects
+**Confidential area — Cloudflare Pages project `darius-life-confidential`**:
+production branch `main`, build command `npm run build`, output directory
+`dist-confidential`, Node 20 (`.node-version`). Secret: `PROTECTED_STRINGS`
+(production and preview), one string per line — the build fails without it.
 
-`darius.life` and `www.darius.life` are attached to the project. `www` to apex is
-a zone Redirect Rule (301, path and query kept), because Pages `_redirects` does
-not support domain-level redirects.
+Why two Cloudflare Pages projects don't make sense here (rather than one
+project serving both directories): Pages custom domains are per-project, and
+`darius.life` and `confidential.darius.life` need to end up on different
+hosts entirely (GitHub vs. Cloudflare) — one project can't do that.
 
-The platform's gateway Worker must have no route on `darius.life`; see
+### Domains
+
+- `darius.life` and `www.darius.life`: GitHub Pages custom domain (a `CNAME`
+  file, written by the build to `dist/CNAME` — see `content/manifest.json`'s
+  absence of it; it's static, not manifest-driven, since it never changes).
+  GitHub auto-redirects whichever of the two isn't the configured canonical
+  domain to the other; no `_redirects` rule is needed or possible on GitHub
+  Pages.
+- `confidential.darius.life`: Cloudflare Pages custom domain, attached to the
+  `darius-life-confidential` project.
+
+The platform's gateway Worker must have no route on either hostname; see
 `.lovable/memory/constraints/darius-life-personal-index.md` in
 `TodaysStep/posteritycloud-infra`.
 
 ### Cloudflare Access
 
-Self-hosted application covering `/legal/private/*` on every hostname that serves
-this project: `darius.life`, `www.darius.life`, `darius-life.pages.dev`, and
-`*.darius-life.pages.dev`. Without the `pages.dev` entries the same files are
-reachable on the project's own address. Policy: allow the listed emails, one-time
-PIN; deny everyone else.
+Self-hosted application covering the whole `darius-life-confidential`
+project's hostnames: `confidential.darius.life` and
+`darius-life-confidential.pages.dev`. Without the `pages.dev` entry the same
+files are reachable on the project's own address. Policy: allow the listed
+emails, one-time PIN; deny everyone else.
+
+### What GitHub Pages can't do
+
+No custom HTTP response headers — `Strict-Transport-Security`,
+`X-Content-Type-Options`, `X-Frame-Options`, `Permissions-Policy`, and the
+`frame-ancestors`/`form-action`/`base-uri` CSP directives, are all header-only
+and cannot be replicated in static HTML. `src/template.html` and
+`src/verify.html` set what a `<meta>` tag can (`Content-Security-Policy`'s
+remaining directives, `Referrer-Policy`); `checks/run-all.mjs` checks those
+instead of a headers file for this target. See
+`docs/github-pages-header-limits.md`. The confidential area keeps every header
+in full, since it stays on Cloudflare Pages.
 
 ### Email
 
