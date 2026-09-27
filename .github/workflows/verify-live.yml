@@ -1,0 +1,24 @@
+name: Verify darius.life live
+on:
+  schedule:
+    - cron: "17 9 * * *" # once daily; an arbitrary off-the-hour minute
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+      # Reports only — this workflow never blocks a deploy. It exists to catch a live
+      # regression (a header dropped, a link gone dead, DNS for confidential.darius.life
+      # breaking again) between pushes, since nothing else runs on a schedule.
+      - run: node checks/verify-live.mjs
+        continue-on-error: true
+        id: verify
+      - if: steps.verify.outcome == 'failure'
+        run: echo "::warning::Live verification found failures — see the job summary above."

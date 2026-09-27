@@ -7,7 +7,8 @@
   "scripts": {
     "build": "node src/build.mjs && node checks/run-all.mjs",
     "check": "node checks/run-all.mjs",
-    "lock": "node src/build.mjs --write-locks && node checks/run-all.mjs"
+    "lock": "node src/build.mjs --write-locks && node checks/run-all.mjs",
+    "verify-live": "node checks/verify-live.mjs"
   },
   "dependencies": {
     "axe-core": "4.10.3",

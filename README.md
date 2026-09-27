@@ -4,6 +4,13 @@ Michael Darius's personal index. Plain static HTML, built by `src/build.mjs`
 from `content/manifest.json` and checked by `checks/run-all.mjs`. `npm run
 build` runs both; if any check fails, nothing deploys.
 
+**Not live yet.** See `docs/handoff-2026-09-27.md` for exactly what's still
+blocking the first successful deploy and who needs to do what. Once it's
+live, `npm run verify-live` (also runs daily via
+`.github/workflows/verify-live.yml`) checks the real deployed site against
+the brief's Section 10 acceptance checks — separate from `npm run build`,
+which only checks local build output.
+
 **Two builds, two hosts, deliberately.** Nothing on the public page is secret —
 only the confidential legal area needs real access control, and GitHub Pages
 cannot provide that (see "Hosting" below). So `src/build.mjs` writes two

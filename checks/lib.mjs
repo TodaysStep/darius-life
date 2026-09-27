@@ -49,6 +49,67 @@ export function formatManifest(m) {
   return `{\n  "sections": [\n${m.sections.map((s) => `    ${line(s)}`).join(",\n")}\n  ],\n  "items": [\n${m.items.map((i) => `    ${line(i)}`).join(",\n")}\n  ]\n}\n`;
 }
 
+export const LINKCHECK_UA = "Mozilla/5.0 (compatible; darius-life-linkcheck/1.0; +https://darius.life)";
+
+// Cloudflare bot walls: either flagged by header, or a block page served by Cloudflare itself.
+export async function isChallenge(r) {
+  if (r.status !== 403 && r.status !== 503) return false;
+  if ((r.headers.get("cf-mitigated") ?? "").includes("challenge")) return true;
+  if (!/cloudflare/i.test(r.headers.get("server") ?? "")) return false;
+  return /challenge-platform|Just a moment\.\.\.|Attention Required! \| Cloudflare/.test(await r.text());
+}
+
+export async function fetchOnce(url, redirect) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 20000);
+  try {
+    return await fetch(url, { redirect, signal: ctl.signal, headers: { "user-agent": LINKCHECK_UA, accept: "text/html,*/*" } });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// A bot wall is not a dead link, and not proof of a live one: require the caller's own
+// evidence (e.g. an author's RSS feed listing the URL) before treating it as resolved.
+export async function resolveLink(url, { onChallenge } = {}) {
+  let last = "no response";
+  for (const wait of [0, 1500, 4000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const first = await fetchOnce(url, "manual");
+      if (await isChallenge(first)) return onChallenge ? onChallenge(url) : { url, ok: false, detail: "bot-walled; no verification method provided" };
+      if (first.status >= 200 && first.status < 300) return { url, ok: true };
+      if (first.status >= 300 && first.status < 400) {
+        const final = await fetchOnce(url, "follow");
+        if (final.status >= 200 && final.status < 300) return { url, ok: true };
+        if (await isChallenge(final)) return onChallenge ? onChallenge(url) : { url, ok: false, detail: "bot-walled; no verification method provided" };
+        last = `redirects to a page answering HTTP ${final.status}`;
+        if (final.status < 500) break;
+        continue;
+      }
+      last = `HTTP ${first.status}`;
+      if (first.status < 500 && first.status !== 429) break;
+    } catch (e) {
+      last = e.cause?.code || e.name || e.message;
+    }
+  }
+  return { url, ok: false, detail: last };
+}
+
+export async function mapLimit(items, limit, fn) {
+  const out = [];
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (i < items.length) {
+        const idx = i++;
+        out[idx] = await fn(items[idx]);
+      }
+    }),
+  );
+  return out;
+}
+
 export function writeLocks(root) {
   const manifestPath = path.join(root, "content/manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));

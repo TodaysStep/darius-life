@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { sha256, extractText, loadDom } from "./lib.mjs";
+import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit } from "./lib.mjs";
 
 if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
   const r = spawnSync(process.execPath, process.argv.slice(1), {
@@ -70,15 +70,6 @@ const REQUIRED_HEADERS = {
 // base-uri when delivered via <meta>). See docs/github-pages-header-limits.md.
 const META_CSP = "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'";
 const META_REFERRER = "no-referrer";
-
-const UA = "Mozilla/5.0 (compatible; darius-life-linkcheck/1.0; +https://darius.life)";
-// Cloudflare bot walls: either flagged by header, or a block page served by Cloudflare itself.
-async function isChallenge(r) {
-  if (r.status !== 403 && r.status !== 503) return false;
-  if ((r.headers.get("cf-mitigated") ?? "").includes("challenge")) return true;
-  if (!/cloudflare/i.test(r.headers.get("server") ?? "")) return false;
-  return /challenge-platform|Just a moment\.\.\.|Attention Required! \| Cloudflare/.test(await r.text());
-}
 
 const TEXT_EXT = new Set([".html", ".txt", ".css", ".sha256", ".json", ".md", ".xml", ".svg", ".csv", ".ico", ""]);
 const walkFiles = (dir) =>
@@ -257,63 +248,13 @@ await check(6, "Every link resolves", async () => {
     }
   }
   if (process.env.LINKCHECK === "skip" && !CI) return { skip: `LINKCHECK=skip (local only); ${hrefs.size} https links not fetched` };
-  const outcomes = await mapLimit([...hrefs], 6, resolveLink);
+  const outcomes = await mapLimit([...hrefs], 6, (u) => resolveLinkBase(u, { onChallenge: challenged }));
   for (const o of outcomes) {
     if (!o.ok) p.push(`${o.url}: ${o.detail}`);
     else if (o.note) console.log(`  link note: ${o.url} — ${o.note}`);
   }
   return p;
 });
-
-async function mapLimit(items, limit, fn) {
-  const out = [];
-  let i = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (i < items.length) {
-        const idx = i++;
-        out[idx] = await fn(items[idx]);
-      }
-    }),
-  );
-  return out;
-}
-
-async function fetchOnce(url, redirect) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 20000);
-  try {
-    return await fetch(url, { redirect, signal: ctl.signal, headers: { "user-agent": UA, accept: "text/html,*/*" } });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-async function resolveLink(url) {
-  let last = "no response";
-  for (const wait of [0, 1500, 4000]) {
-    if (wait) await new Promise((r) => setTimeout(r, wait));
-    try {
-      const first = await fetchOnce(url, "manual");
-      if (await isChallenge(first)) return challenged(url);
-      if (first.status >= 200 && first.status < 300) return { url, ok: true };
-      if (first.status >= 300 && first.status < 400) {
-        const final = await fetchOnce(url, "follow");
-        if (final.status >= 200 && final.status < 300) return { url, ok: true };
-        if (await isChallenge(final)) return challenged(url);
-        last = `redirects to a page answering HTTP ${final.status}`;
-        if (final.status < 500) break;
-        continue;
-      }
-      last = `HTTP ${first.status}`;
-      if (first.status < 500 && first.status !== 429) break;
-    } catch (e) {
-      last = e.cause?.code || e.name || e.message;
-    }
-  }
-  return { url, ok: false, detail: last };
-}
-
 
 // A bot wall is not a dead link, and not proof of a live one: require the author's feed
 // to list the post, or a recorded proof committed with the link.
