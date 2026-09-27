@@ -132,7 +132,7 @@ function renderSectionItems(items, ctx) {
   return out.join("\n");
 }
 
-export function build() {
+export async function build() {
   const manifest = readJSON("content/manifest.json");
   const ctx = {
     status: readJSON("data/status.json"),
@@ -186,11 +186,22 @@ export function build() {
   // redirects www to whichever domain is named here.
   fs.writeFileSync(path.join(DIST, "CNAME"), "darius.life\n");
   fs.writeFileSync(path.join(DIST, ".nojekyll"), "");
+
+  // Link-preview image and icons: generated fresh every build, in the site's own
+  // two colours and its own font — never hand-drawn, never fetched, so they can
+  // never drift from the page they represent. See src/generate-images.mjs.
+  const { generateImages } = await import("./generate-images.mjs");
+  const images = await generateImages(ROOT);
+  fs.writeFileSync(path.join(DIST, "og.png"), images.og);
+  fs.writeFileSync(path.join(DIST, "apple-touch-icon.png"), images.appleTouchIcon);
+  fs.writeFileSync(path.join(DIST, "favicon.ico"), images.favicon);
+  fs.writeFileSync(path.join(DIST, "favicon.svg"), images.faviconSvg);
+
   return { manifest, termsText, termsHash };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  build();
+  await build();
   if (process.argv.includes("--write-locks")) {
     const { writeLocks } = await import("../checks/lib.mjs");
     writeLocks(ROOT);

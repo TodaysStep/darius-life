@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "description": "darius.life — Michael Darius's personal index.",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node src/build.mjs && node checks/run-all.mjs",
     "check": "node checks/run-all.mjs",
@@ -11,7 +13,11 @@
     "verify-live": "node checks/live.mjs"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "axe-core": "4.10.3",
-    "jsdom": "26.1.0"
+    "jsdom": "26.1.0",
+    "png-to-ico": "^3.0.2",
+    "pngjs": "^7.0.0",
+    "wawoff2": "^2.0.1"
   }
 }

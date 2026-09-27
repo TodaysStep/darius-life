@@ -78,6 +78,23 @@ fetching it. The build accepts a Medium link only when the post is listed in
 proof for that exact URL. The feed holds the ten newest posts, so a new article
 passes on its own; an older one needs a recorded proof.
 
+## Link preview and icons
+
+`og.png`, `apple-touch-icon.png`, `favicon.ico`, and `favicon.svg` are generated
+fresh every build by `src/generate-images.mjs` — never hand-drawn, never
+fetched, so they can never drift from the page they represent. All four are
+the site's own two colours (`#F6F3EE` background, `#111111` text/mark) and its
+own font (Courier Prime), decompressed at build time from the `.woff2` files
+in `assets/fonts/` since the SVG-to-PNG renderer (`@resvg/resvg-js`) can only
+load raw TTF/OTF, not WOFF2. `<title>`, the meta description, Open Graph tags,
+Twitter Card tags, the icon `<link>`s, and `<link rel="canonical">` are static
+in `src/template.html` — check 20 (`checks/run-all.mjs`) fails the build if
+any of them is missing or doesn't match exactly, and if `og.png` or
+`apple-touch-icon.png` isn't exactly the required pixel size.
+`checks/live.mjs` separately confirms the live page serves the same tags and
+that `https://darius.life/og.png` actually returns 200 — a build can't check
+that against a URL that doesn't exist yet on a first deploy.
+
 ## The private legal area
 
 Documents live only in the R2 bucket `darius-life-private` — never in this
@@ -100,7 +117,7 @@ since that content must never leave R2.
 
 ## Checks
 
-`npm run build` runs all 19 checks in Section 8 of the brief against the
+`npm run build` runs all 20 checks in Section 8 of the brief against the
 build output. Locally:
 
 - `LINKCHECK=skip npm run build` skips fetching live links. Both CI providers

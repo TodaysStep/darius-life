@@ -56,6 +56,13 @@ export function extractText(el, { skipDynamic = false } = {}) {
 
 export const loadDom = (file) => new JSDOM(fs.readFileSync(file, "utf8")).window.document;
 
+// Width/height straight from the PNG's own IHDR chunk (bytes 16-23), independently
+// of whatever generated the file — no image library needed just to check this.
+export function pngDimensions(buf) {
+  if (buf.length < 24 || buf.toString("hex", 0, 8) !== "89504e470d0a1a0a") throw new Error("not a PNG file");
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
 export const itemHash = (doc, id) => {
   const el = doc.querySelector(`[data-id="${id}"]`);
   return el ? sha256(extractText(el, { skipDynamic: true })) : null;

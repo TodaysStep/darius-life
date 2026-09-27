@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { sha256, resolveLink, fetchOnce, mapLimit, REQUIRED_HEADERS, META_CSP } from "./lib.mjs";
+import { sha256, resolveLink, fetchOnce, mapLimit, REQUIRED_HEADERS, META_CSP, pngDimensions } from "./lib.mjs";
 
 const execFileP = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -180,12 +180,38 @@ await check("no request leaves darius.life on the page as fetched (acceptance 9,
   if (!liveDoc) return { skip: "page fetch failed" };
   const p = [];
   for (const el of liveDoc.querySelectorAll("[href], [src]")) {
-    if (el.tagName === "A") continue;
+    if (el.tagName === "A" || (el.tagName === "LINK" && el.getAttribute("rel") === "canonical")) continue;
     const v = el.getAttribute("href") ?? el.getAttribute("src");
     if (v && !v.startsWith("/")) p.push(`<${el.tagName.toLowerCase()}> loads ${v}`);
   }
   for (const tag of ["form", "script", "iframe"]) if (liveDoc.querySelector(tag)) p.push(`contains <${tag}>`);
   return p;
+});
+
+// -------------------------------------------------------------- preview/page metadata (link-preview request)
+await check("preview and page metadata present on the live page", () => {
+  if (!liveDoc) return { skip: "page fetch failed" };
+  const meta = (sel) => liveDoc.querySelector(sel)?.getAttribute("content");
+  const p = [];
+  if (liveDoc.querySelector("title")?.textContent !== "Michael Darius") p.push("title is not exactly \"Michael Darius\"");
+  if (liveDoc.querySelector('link[rel="canonical"]')?.getAttribute("href") !== "https://darius.life/") p.push("canonical link missing or wrong");
+  for (const prop of ["og:title", "og:type", "og:url", "og:site_name", "og:locale", "og:description", "og:image", "og:image:width", "og:image:height", "og:image:alt"]) {
+    if (!meta(`meta[property="${prop}"]`)) p.push(`meta[property="${prop}"] missing`);
+  }
+  for (const name of ["twitter:card", "twitter:title", "twitter:description", "twitter:image"]) {
+    if (!meta(`meta[name="${name}"]`)) p.push(`meta[name="${name}"] missing`);
+  }
+  if (!liveDoc.querySelector('link[rel="icon"][href="/favicon.ico"]')) p.push("favicon.ico <link> missing");
+  if (!liveDoc.querySelector('link[rel="icon"][type="image/svg+xml"]')) p.push("favicon.svg <link> missing");
+  if (!liveDoc.querySelector('link[rel="apple-touch-icon"]')) p.push("apple-touch-icon <link> missing");
+  return p;
+});
+
+await check("og:image (og.png) returns 200 on the live site at exactly 1200x630", async () => {
+  const r = await fetchOnce(`${PUBLIC}/og.png`, "follow");
+  if (r.status !== 200) return [`HTTP ${r.status}`];
+  const dim = pngDimensions(Buffer.from(await r.arrayBuffer()));
+  return dim.width === 1200 && dim.height === 630 ? [] : [`live og.png is ${dim.width}x${dim.height}, expected 1200x630`];
 });
 
 // -------------------------------------------------------------- report

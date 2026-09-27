@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit, META_CSP, META_REFERRER } from "./lib.mjs";
+import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit, META_CSP, META_REFERRER, pngDimensions } from "./lib.mjs";
 
 if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
   const r = spawnSync(process.execPath, process.argv.slice(1), {
@@ -41,6 +41,9 @@ footer.press, footer.updated, footer.copyright`
   .filter(Boolean);
 
 const PAGE_ORDER = ["identity", "status", "resume", "terms", "notes", "legal", "projects", "help", "writing", "footer"];
+
+const DESCRIPTION =
+  "Design founder. Built the iTunes Music Store and Apple's early cloud services at Apple. Now building Living Instruments and helping others build their own ventures through Small Step Ventures.";
 
 const STATUS_VOCABULARY = [
   "Heads down.",
@@ -255,8 +258,9 @@ async function challenged(url) {
 await check(7, "Destination allowlist", () => {
   const p = [];
   const hrefsOf = (d) => [...d.querySelectorAll("[href], [src]")].map((e) => [e.tagName.toLowerCase(), e.getAttribute("href") ?? e.getAttribute("src")]);
-  const RESOURCES = /^\/(styles\.css|assets\/fonts\/courier-prime\/[\w.-]+\.woff2)$/;
+  const RESOURCES = /^\/(styles\.css|favicon\.ico|favicon\.svg|apple-touch-icon\.png|assets\/fonts\/courier-prime\/[\w.-]+\.woff2)$/;
   for (const [tag, href] of hrefsOf(doc)) {
+    if (tag === "link" && href === "https://darius.life/") continue; // <link rel="canonical"> — self-referential, not a fetched resource
     if (tag === "a" ? !allow.index.includes(href) : !RESOURCES.test(href)) p.push(`index.html: <${tag}> destination not allowed: ${href}`);
   }
   if (verifyDoc) {
@@ -332,7 +336,7 @@ await check(11, "No inbound channel on the site", () => {
     for (const tag of BANNED) if (d.querySelector(tag)) p.push(`${rel(f)} contains <${tag}>`);
     for (const el of d.querySelectorAll("*")) {
       for (const attr of el.getAttributeNames()) if (/^on/i.test(attr)) p.push(`${rel(f)}: inline handler ${attr} on <${el.tagName.toLowerCase()}>`);
-      if (el.tagName !== "A") {
+      if (el.tagName !== "A" && !(el.tagName === "LINK" && el.getAttribute("rel") === "canonical")) {
         for (const a of ["href", "src", "srcset", "action", "data", "poster"]) {
           const v = el.getAttribute(a);
           if (v && !v.startsWith("/")) p.push(`${rel(f)}: <${el.tagName.toLowerCase()} ${a}> loads ${v} (only same-site resources are allowed)`);
@@ -421,7 +425,10 @@ await check(15, "Performance", () => {
   const p = [];
   const resources = [
     indexFile,
-    ...[...doc.querySelectorAll("link[href]")].map((l) => path.join(DIST, l.getAttribute("href"))),
+    ...[...doc.querySelectorAll("link[href]")]
+      .map((l) => l.getAttribute("href"))
+      .filter((h) => h.startsWith("/")) // skip <link rel="canonical">, which is self-referential, not fetched
+      .map((h) => path.join(DIST, h)),
   ];
   const css = read("src/styles.css");
   for (const m of css.matchAll(/url\("?(\/[^")]+)/g)) resources.push(path.join(DIST, m[1]));
@@ -494,6 +501,66 @@ await check(19, "No email address anywhere in the build", () => {
   for (const f of textFiles) {
     const found = fs.readFileSync(f, "utf8").match(EMAIL);
     if (found) p.push(`${rel(f)} contains an email address: ${[...new Set(found)].join(", ")}`);
+  }
+  return p;
+});
+
+// ---------------------------------------------------------------- 20
+// og:image/twitter:image point at the live URL (checks/live.mjs confirms it
+// actually returns 200 post-deploy — a build can't fetch a URL that doesn't
+// exist yet on a first deploy, the same chicken-and-egg problem PROTECTED_STRINGS
+// and DNS proxying already ran into earlier in this project).
+await check(20, "Preview and page metadata", () => {
+  const p = [];
+  const meta = (sel) => doc.querySelector(sel)?.getAttribute("content");
+  const title = doc.querySelector("title")?.textContent;
+  if (title !== "Michael Darius") p.push(`<title> is "${title}", expected "Michael Darius"`);
+  if (meta('meta[name="description"]') !== DESCRIPTION) p.push(`meta description does not match the approved text`);
+  if (doc.querySelector('link[rel="canonical"]')?.getAttribute("href") !== "https://darius.life/") p.push(`<link rel="canonical" href="https://darius.life/"> missing or wrong`);
+  const OG = {
+    "og:title": "Michael Darius",
+    "og:type": "profile",
+    "og:url": "https://darius.life/",
+    "og:site_name": "darius.life",
+    "og:locale": "en_US",
+    "og:description": DESCRIPTION,
+    "og:image": "https://darius.life/og.png",
+    "og:image:width": "1200",
+    "og:image:height": "630",
+  };
+  for (const [prop, want] of Object.entries(OG)) {
+    const got = meta(`meta[property="${prop}"]`);
+    if (got !== want) p.push(`meta[property="${prop}"] is ${got ? `"${got}"` : "missing"}, expected "${want}"`);
+  }
+  if (!meta('meta[property="og:image:alt"]')) p.push(`meta[property="og:image:alt"] is missing`);
+  const TWITTER = {
+    "twitter:card": "summary_large_image",
+    "twitter:title": "Michael Darius",
+    "twitter:description": DESCRIPTION,
+    "twitter:image": "https://darius.life/og.png",
+  };
+  for (const [name, want] of Object.entries(TWITTER)) {
+    const got = meta(`meta[name="${name}"]`);
+    if (got !== want) p.push(`meta[name="${name}"] is ${got ? `"${got}"` : "missing"}, expected "${want}"`);
+  }
+  if (!doc.querySelector('link[rel="icon"][href="/favicon.ico"]')) p.push(`<link rel="icon" href="/favicon.ico"> missing`);
+  if (!doc.querySelector('link[rel="icon"][type="image/svg+xml"][href="/favicon.svg"]')) p.push(`<link rel="icon" type="image/svg+xml" href="/favicon.svg"> missing`);
+  if (!doc.querySelector('link[rel="apple-touch-icon"][href="/apple-touch-icon.png"]')) p.push(`<link rel="apple-touch-icon" href="/apple-touch-icon.png"> missing`);
+
+  for (const [file, want] of [
+    ["og.png", { width: 1200, height: 630 }],
+    ["apple-touch-icon.png", { width: 180, height: 180 }],
+  ]) {
+    const f = path.join(DIST, file);
+    if (!fs.existsSync(f)) {
+      p.push(`dist/${file} is missing`);
+      continue;
+    }
+    const dim = pngDimensions(fs.readFileSync(f));
+    if (dim.width !== want.width || dim.height !== want.height) p.push(`dist/${file} is ${dim.width}x${dim.height}, expected ${want.width}x${want.height}`);
+  }
+  for (const file of ["favicon.ico", "favicon.svg"]) {
+    if (!fs.existsSync(path.join(DIST, file))) p.push(`dist/${file} is missing`);
   }
   return p;
 });
