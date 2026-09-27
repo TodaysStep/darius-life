@@ -48,17 +48,23 @@ Builds from `TodaysStep/darius-life` on every push to `main`, via
    Only once this is 200 should you proceed to step 5 (DNS cutover to
    Proxied) below.
 
-## 3. Private legal area — Cloudflare Worker + R2, same domain
+## 3. Private legal area + control panel — Cloudflare Worker + R2, same domain
 
-No separate hostname. `workers/private-legal` serves
-`darius.life/legal/private/*` directly, reading from an R2 bucket — the
-documents themselves never enter this repo, which is public.
+No separate hostname. `workers/private-legal` serves two paths on
+`darius.life` directly:
+
+- `/legal/private/*` — the private legal area, reading from an R2 bucket; the
+  documents themselves never enter this repo, which is public.
+- `/control/*` — Darius's own control panel for his personal status and every
+  project's status (no code, no GitHub editing; see `cloudflare/rules.md`'s
+  "Control panel" section for how it works).
 
 1. R2 → Create bucket: `darius-life-private`.
 2. Zero Trust → Access → Applications → Add → Self-hosted:
    - Name: `darius.life private legal area`
-   - Path: `darius.life/legal/private/*` — **not** a separate hostname, and
-     not the whole domain (the public page must stay ungated)
+   - Paths: `darius.life/legal/private/*` **and** `darius.life/control/*` —
+     both on this one application, same policy. Neither is the whole domain
+     (the public page must stay ungated).
    - Policy: Allow, Include → Emails → the specific addresses Darius enters
    - Login method: One-time PIN
 3. Copy that application's AUD tag, and the account's Access team domain
@@ -66,18 +72,25 @@ documents themselves never enter this repo, which is public.
    `<team-name>.cloudflareaccess.com` shown throughout the Zero Trust
    dashboard). Set both in `workers/private-legal/wrangler.toml`'s `[vars]`:
    `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`. The Worker independently re-verifies
-   the Access JWT against these — a wrong value fails closed (403, never
-   200), so get them right before the first deploy.
+   the Access JWT against these for both paths — a wrong value fails closed
+   (403, never 200), so get them right before the first deploy.
 4. Repo → Settings → Secrets and variables → Actions → add
-   `CLOUDFLARE_API_TOKEN` (a token scoped to Workers/R2 edit on this account)
-   and `CLOUDFLARE_ACCOUNT_ID`. These drive `deploy-worker`
-   (`.github/workflows/deploy.yml`, `cloudflare/wrangler-action@v4`).
+   `CLOUDFLARE_API_TOKEN` (a token scoped to Workers/R2 edit on this account),
+   `CLOUDFLARE_ACCOUNT_ID`, and `GITHUB_COMMIT_TOKEN` (a fine-grained GitHub
+   PAT scoped to only this repo, Contents: Read and write — the control panel
+   uses it to commit `data/status.json`/`data/projects.json` on Darius's
+   behalf). These drive `deploy-worker` (`.github/workflows/deploy.yml`,
+   `cloudflare/wrangler-action@v4`) — `GITHUB_COMMIT_TOKEN` specifically is
+   uploaded to the Worker as an encrypted secret on every deploy, never baked
+   into the bundle.
 5. Push to `main`. The `deploy-worker` job runs `wrangler deploy` from
    `workers/private-legal`, which reads its `[[routes]]` block
-   (`darius.life/legal/private/*`) and attaches the route to the zone
-   directly — no dashboard step needed for the route itself.
-6. Put documents in the R2 bucket (dashboard upload, or `wrangler r2 object
-   put darius-life-private/<key> --file=...`) — never in this repo.
+   (both paths) and attaches them to the zone directly — no dashboard step
+   needed for the routes themselves.
+6. Put legal documents in the R2 bucket (dashboard upload, or `wrangler r2
+   object put darius-life-private/<key> --file=...`) — never in this repo.
+7. Visit `https://darius.life/control/` (logged in via Access) to confirm the
+   control panel loads and shows the current status and every project.
 
 ## 4. DNS
 

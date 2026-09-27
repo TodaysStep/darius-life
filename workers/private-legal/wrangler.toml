@@ -1,12 +1,21 @@
-# Serves darius.life/legal/private/* from R2 only after verifying the Access JWT
-# itself (defense in depth — do not rely solely on Access having already checked
-# the request at the edge). See src/index.js and docs/cloudflare-setup.md.
+# Serves two darius.life routes, neither trusting Cloudflare Access alone —
+# each independently verifies the Access JWT itself (see src/access.js) before
+# doing anything else:
+#   - /legal/private/*  the private legal area, reading from R2 (src/legal.js)
+#   - /control/*        Darius's own status/projects control panel (src/control.js),
+#                        which commits data/status.json and data/projects.json
+#                        back to this repo's main branch via the GitHub API —
+#                        see docs/cloudflare-setup.md.
 name = "darius-life-private-legal"
 main = "src/index.js"
 compatibility_date = "2026-09-27"
 
 [[routes]]
 pattern = "darius.life/legal/private/*"
+zone_name = "darius.life"
+
+[[routes]]
+pattern = "darius.life/control/*"
 zone_name = "darius.life"
 
 [[r2_buckets]]
@@ -16,5 +25,13 @@ bucket_name = "darius-life-private"
 [vars]
 # Set to the real team domain and this Access application's AUD tag before first
 # deploy — see docs/cloudflare-setup.md. Wrong values fail closed (403), not open.
+# The same Access application must also list darius.life/control/* as a covered
+# path (in addition to /legal/private/*) for /control/* to be reachable at all.
 ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
 ACCESS_AUD = "REPLACE-ME"
+GITHUB_REPO = "TodaysStep/darius-life"
+GITHUB_BRANCH = "main"
+# GITHUB_COMMIT_TOKEN is a secret, not a var — set with
+# `wrangler secret put GITHUB_COMMIT_TOKEN` or via deploy.yml's wrangler-action
+# `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).
+# A fine-grained GitHub PAT scoped to only this repo, Contents: Read and write.

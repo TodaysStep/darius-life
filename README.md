@@ -30,7 +30,17 @@ approved reversal of an earlier design (splitting hosting across
 `confidential.darius.life` specifically to avoid any Cloudflare dependency for
 the public page) — see `docs/handoff-2026-09-27.md` for why.
 
-## Change your status
+## Change your status, or pause/resume a project
+
+**From your phone, no code:** `https://darius.life/control/`, behind the same
+Cloudflare Access login as the private legal area. Pick a status, pick Active
+or Paused for each project, tap Save. That writes a real commit to `main` —
+the same push event as any manual edit — so it goes through the exact same
+build, checks, and deploy as any other change, live within a few minutes. See
+`cloudflare/rules.md`'s "Control panel" section for how it works and what it
+needs (`workers/private-legal/src/control.js`).
+
+**By hand, if you'd rather:**
 
 1. Edit `data/status.json` and set `personal` to one of these lines, exactly:
    - `Heads down.`
@@ -39,14 +49,23 @@ the public page) — see `docs/handoff-2026-09-27.md` for why.
    - `Surfacing soon.`
    - `Between projects, more reachable than usual.`
    - `Handling something. Will update when there's something to say.`
+
+   Or edit `data/projects.json` and set a project to `"paused"` or `"active"`.
 2. Commit and push. GitHub Actions rebuilds and publishes it.
 
-## Pause or resume a project
+These two files are the only content that changes without changing a lock
+file — both the control panel and a manual edit write only to them.
 
-1. Edit `data/projects.json` and set the project to `"paused"` or `"active"`.
-2. Commit and push. The page shows `○ Paused` or `● Active` beside that project.
+## Status and project lights
 
-These two files are the only content that changes without changing a lock file.
+Every status and project indicator is a small lit, glowing LED next to plain
+text naming the same state — never colour alone. New Work Security Protection
+is a permanently-lit green LED with a small CSS-drawn padlock (no image, no
+inline SVG — the page allows neither); it has no toggle anywhere, in the UI or
+in code. Personal status is a lit green LED beside the current line. Each
+project is green for Active, grey for Paused. The two LED colours are the
+page's one deliberate exception to its own two-colour budget — check 14
+(`checks/run-all.mjs`) allows exactly those two hex values and nothing else.
 
 ## Everything else
 

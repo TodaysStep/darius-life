@@ -73,7 +73,10 @@ worth double-checking given this site's whole design is zero JavaScript.
 ## Access application (section 9.9)
 
 - Type: Self-hosted
-- Path: `darius.life/legal/private/*`
+- Path: `darius.life/legal/private/*` **and** `darius.life/control/*` — both
+  paths on the same application, same policy. `/control/*` is the status/
+  projects control panel (see "Control panel" below); it needs exactly the
+  same gate, not a separate Access application.
 - Policy: Allow — Include: the specific emails Darius enters — one-time PIN
 - Everyone else: deny
 
@@ -82,3 +85,28 @@ The Worker (`workers/private-legal`) independently re-verifies the
 account's Access team domain — set those two values in
 `workers/private-legal/wrangler.toml`'s `[vars]` before first deploy (both fail
 closed — a wrong value returns 403, never 200).
+
+## Control panel (section 9's status/projects control requirement)
+
+`darius.life/control/*` (`workers/private-legal/src/control.js`) lets Darius
+change his personal status and every project's status from his phone — no
+code, no GitHub UI. It reads and writes `data/status.json` and
+`data/projects.json` in this repo directly, via the GitHub Contents API, using
+a secret the Worker needs at runtime:
+
+- Create a fine-grained GitHub personal access token: Settings → Developer
+  settings → Personal access tokens → Fine-grained tokens → repository access
+  limited to **only** `TodaysStep/darius-life`, permission **Contents: Read
+  and write**, nothing else.
+- Add it as a repository secret named `GITHUB_COMMIT_TOKEN` (same place as
+  `CLOUDFLARE_API_TOKEN` etc.) — `.github/workflows/deploy.yml`'s
+  `deploy-worker` job uploads it to the Worker as an encrypted secret
+  (`wrangler secret put`, via `wrangler-action`'s `secrets` input) on every
+  deploy. It is never committed and never appears in a build log.
+
+A submitted change writes a normal commit to `main` (the same as any manual
+edit would), which is what actually makes it "live in a few minutes": it goes
+through the exact same `deploy.yml` build → checks → deploy pipeline as any
+other push, not a bypass of it. If a submitted status line or project value
+doesn't match what the build itself would accept, the control panel refuses
+it before writing anything — see `workers/private-legal/src/control.test.mjs`.

@@ -52,6 +52,15 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/private-legal
           command: deploy
+          # Uploaded to the Worker as an encrypted secret (wrangler secret put),
+          # not baked into the bundle — the control panel (/control/*) uses it to
+          # read and commit data/status.json and data/projects.json via the
+          # GitHub API. A fine-grained PAT scoped to only this repo, Contents:
+          # Read and write.
+          secrets: |
+            GITHUB_COMMIT_TOKEN
+        env:
+          GITHUB_COMMIT_TOKEN: ${{ secrets.GITHUB_COMMIT_TOKEN }}
 
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
