@@ -1,32 +1,23 @@
 #!/usr/bin/env node
 // Section 10 acceptance checks, run against the REAL deployed site — not local build
-// output. Runs daily via .github/workflows/verify-live.yml, and by hand any time with
-// `node checks/verify-live.mjs`. Never fails the build (there is no build here); it
-// reports, so a live regression is visible without needing a push to surface it.
+// output. This is the final job of .github/workflows/deploy.yml (gates the workflow —
+// brief v2.1 check 18, so this script's own exit code must fail it) and runs again,
+// unattended, once daily via .github/workflows/verify-live.yml.
 import fs from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { sha256, resolveLink, fetchOnce, mapLimit } from "./lib.mjs";
+import { sha256, resolveLink, fetchOnce, mapLimit, REQUIRED_HEADERS, META_CSP } from "./lib.mjs";
 
+const execFileP = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const readJSON = (p) => JSON.parse(read(p));
 
 const PUBLIC = "https://darius.life";
-const CONFIDENTIAL = "https://confidential.darius.life";
-const WORKERS_DEV_FALLBACK = "https://darius-life-confidential.n8rr6kghc8.workers.dev";
-
-const REQUIRED_HEADERS = {
-  "content-security-policy":
-    "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'",
-  "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-  "permissions-policy": "camera=(), microphone=(), geolocation=()",
-  "x-frame-options": "DENY",
-};
-const META_CSP = "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'";
+const GITHUB_PAGES_IPS = ["185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153"];
 
 const results = [];
 async function check(name, fn) {
@@ -36,23 +27,27 @@ async function check(name, fn) {
   } catch (e) {
     problems = [e.cause?.code ? `${e.cause.code}: ${e.message}` : e.message || String(e)];
   }
-  results.push({ name, status: problems.length ? "FAIL" : "PASS", problems });
+  if (problems?.skip) results.push({ name, status: "SKIP", problems: [problems.skip] });
+  else results.push({ name, status: problems.length ? "FAIL" : "PASS", problems });
 }
 
-// -------------------------------------------------------------- the public page
-await check("darius.life loads over HTTPS (acceptance 1)", async () => {
+// -------------------------------------------------------------- acceptance 1
+await check("darius.life loads over HTTPS through Cloudflare (acceptance 1)", async () => {
   const r = await fetchOnce(`${PUBLIC}/`, "manual");
-  return r.status === 200 ? [] : [`HTTP ${r.status}`];
+  const p = [];
+  if (r.status !== 200) p.push(`HTTP ${r.status}`);
+  if (!r.headers.get("cf-ray")) p.push('no cf-ray header — not passing through Cloudflare yet (see "DNS records proxied" in docs/handoff)');
+  return p;
 });
 
-await check("www.darius.life redirects to the apex (acceptance 1)", async () => {
+await check("www.darius.life redirects 301 to the apex (acceptance 1)", async () => {
   const r = await fetchOnce("https://www.darius.life/", "manual");
+  if (r.status !== 301) return [`expected 301, got HTTP ${r.status}`];
   const loc = r.headers.get("location");
-  if (r.status < 300 || r.status >= 400) return [`expected a redirect, got HTTP ${r.status}`];
-  if (!loc || !loc.replace(/\/$/, "") === `${PUBLIC}`) return [`redirects to "${loc}", not ${PUBLIC}/`];
-  return [];
+  return loc?.replace(/\/$/, "") === PUBLIC ? [] : [`redirects to "${loc}", not ${PUBLIC}/`];
 });
 
+// -------------------------------------------------------------- acceptance 2 + 4
 let liveDoc = null;
 await check("darius.life page fetched and parsed", async () => {
   const r = await fetchOnce(`${PUBLIC}/`, "follow");
@@ -61,7 +56,7 @@ await check("darius.life page fetched and parsed", async () => {
   return [];
 });
 
-await check("manifest IDs are all present on the live page (acceptance 2)", () => {
+await check("every manifest ID is visible on the live page (acceptance 2)", () => {
   if (!liveDoc) return { skip: "page fetch failed" };
   const manifest = readJSON("content/manifest.json");
   const missing = manifest.items.filter((i) => !liveDoc.querySelector(`[data-id="${i.id}"]`)).map((i) => i.id);
@@ -76,19 +71,17 @@ await check("terms visible with no click (acceptance 4)", () => {
   return [];
 });
 
-await check("public page has no <form>, <script>, or tracker (defense in depth)", () => {
-  if (!liveDoc) return { skip: "page fetch failed" };
-  for (const tag of ["form", "script", "input", "iframe"]) if (liveDoc.querySelector(tag)) return [`contains <${tag}>`];
-  return [];
-});
-
-await check("public page meta CSP matches (acceptance 7, GitHub Pages variant)", () => {
+await check("<meta> CSP/referrer fallback present (kept per brief v2.1 check 13)", () => {
   if (!liveDoc) return { skip: "page fetch failed" };
   const csp = liveDoc.querySelector('meta[http-equiv="Content-Security-Policy" i]')?.getAttribute("content");
-  return csp === META_CSP ? [] : [`meta CSP is "${csp}"`];
+  const ref = liveDoc.querySelector('meta[name="referrer" i]')?.getAttribute("content");
+  const p = [];
+  if (csp !== META_CSP) p.push(`meta CSP is "${csp}"`);
+  if (ref !== "no-referrer") p.push(`meta referrer is "${ref}"`);
+  return p;
 });
 
-// -------------------------------------------------------------- terms + /verify
+// -------------------------------------------------------------- acceptance 3
 let termsTxt = null;
 await check("/terms.txt matches terms.lock (acceptance 3)", async () => {
   const r = await fetchOnce(`${PUBLIC}/terms.txt`, "follow");
@@ -103,7 +96,7 @@ await check("/terms.sha256 publishes the same hash (acceptance 3)", async () => 
   if (r.status !== 200) return [`HTTP ${r.status}`];
   const body = await r.text();
   const lock = read("terms.lock").trim();
-  return body === `${lock}  terms.txt\n` ? [] : [`/terms.sha256 is "${body.trim()}", expected "${lock}  terms.txt"`];
+  return body === `${lock}  terms.txt\n` ? [] : [`/terms.sha256 is "${body.trim()}"`];
 });
 
 await check("/verify shows the same hash and effective date (acceptance 3)", async () => {
@@ -111,17 +104,49 @@ await check("/verify shows the same hash and effective date (acceptance 3)", asy
   if (r.status !== 200) return [`HTTP ${r.status}`];
   const doc = new JSDOM(await r.text()).window.document;
   const lock = read("terms.lock").trim();
-  const hash = doc.querySelector('[data-verify="hash"]')?.textContent;
-  const want = JSON.parse(read("content/manifest.json")).items.find((i) => i.id === "terms")?.effective;
-  const got = doc.querySelector('[data-verify="effective"]')?.textContent;
+  const want = readJSON("content/manifest.json").items.find((i) => i.id === "terms")?.effective;
   const p = [];
-  if (hash !== lock) p.push(`/verify hash is "${hash}", terms.lock is "${lock}"`);
+  const hash = doc.querySelector('[data-verify="hash"]')?.textContent;
+  if (hash !== lock) p.push(`/verify hash is "${hash}"`);
+  const got = doc.querySelector('[data-verify="effective"]')?.textContent;
   if (got !== want) p.push(`/verify effective date is "${got}", manifest says "${want}"`);
   return p;
 });
 
-// -------------------------------------------------------------- every link on the live page
-await check("every link on the live page resolves (acceptance 6)", async () => {
+// -------------------------------------------------------------- acceptance 5 + 6: the private area
+await check('/legal/private/ requires Access login — denies an unauthenticated request (acceptance 5)', async () => {
+  const r = await fetchOnce(`${PUBLIC}/legal/private/`, "manual");
+  if (r.status === 200) {
+    const body = await r.text();
+    if (/ACTIVE LEGAL PROCEEDINGS/i.test(body)) return ["served the real page with no Access login — NOT gated"];
+  }
+  // 302/403 to the Access login, or any non-200, counts as gated. This cannot verify
+  // that an ALLOWED email succeeds — that needs a real authenticated session.
+  return [];
+});
+
+await check("the GitHub origin itself refuses /legal/private/ directly (acceptance 6)", async () => {
+  const p = [];
+  for (const ip of GITHUB_PAGES_IPS) {
+    try {
+      const { stdout } = await execFileP("curl", [
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--resolve", `darius.life:443:${ip}`,
+        "--max-time", "10",
+        "https://darius.life/legal/private/",
+      ]);
+      if (stdout.trim() === "200") {
+        p.push(`origin ${ip} answered 200 for /legal/private/ directly — private content is reachable bypassing Cloudflare/Access entirely`);
+      }
+    } catch (e) {
+      p.push(`could not reach origin ${ip} directly: ${e.message}`);
+    }
+  }
+  return p;
+});
+
+// -------------------------------------------------------------- acceptance 7
+await check("every link on the live page resolves (acceptance 7)", async () => {
   if (!liveDoc) return { skip: "page fetch failed" };
   const hrefs = [...new Set([...liveDoc.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "").filter((h) => h.startsWith("https://")))];
   const evidence = readJSON("checks/link-evidence.json");
@@ -139,43 +164,28 @@ async function challenged(url, evidence) {
   return rec ? { url, ok: true, note: `bot-walled; recorded proof ${rec.provedAt}` } : { url, ok: false, detail: "bot-walled and not in feed" };
 }
 
-// -------------------------------------------------------------- headers (acceptance 7)
-await check("security headers present on darius.life", async () => {
+// -------------------------------------------------------------- acceptance 8: headers
+await check("every security header from check 13 is present on darius.life (acceptance 8)", async () => {
   const r = await fetchOnce(`${PUBLIC}/`, "follow");
-  const p = [];
-  for (const h of ["strict-transport-security", "x-content-type-options", "x-frame-options"]) {
-    if (r.headers.get(h)) p.push(`${h} unexpectedly present on GitHub Pages — see docs/github-pages-header-limits.md`);
-  }
-  return p;
-});
-
-await check("security headers present on confidential.darius.life", async () => {
-  const r = await fetchOnce(`${CONFIDENTIAL}/`, "follow");
   const p = [];
   for (const [h, v] of Object.entries(REQUIRED_HEADERS)) {
     const got = r.headers.get(h);
-    if (got !== v) p.push(`${h}: expected "${v}", got ${got ? `"${got}"` : "nothing"} (may be masked by an Access login page — HTTP ${r.status})`);
+    if (got !== v) p.push(`${h}: expected "${v}", got ${got ? `"${got}"` : "nothing"}`);
   }
   return p;
 });
 
-// -------------------------------------------------------------- confidential area is gated (acceptance 5)
-await check("confidential.darius.life does not serve its real content unauthenticated (acceptance 5)", async () => {
-  const r = await fetchOnce(`${CONFIDENTIAL}/`, "follow");
-  if (r.status === 200) {
-    const body = await r.text();
-    if (/ACTIVE LEGAL PROCEEDINGS/i.test(body)) return ["served the real page with no Access login — NOT gated"];
+// -------------------------------------------------------------- acceptance 9 (partial — no browser here)
+await check("no request leaves darius.life on the page as fetched (acceptance 9, static analysis)", () => {
+  if (!liveDoc) return { skip: "page fetch failed" };
+  const p = [];
+  for (const el of liveDoc.querySelectorAll("[href], [src]")) {
+    if (el.tagName === "A") continue;
+    const v = el.getAttribute("href") ?? el.getAttribute("src");
+    if (v && !v.startsWith("/")) p.push(`<${el.tagName.toLowerCase()}> loads ${v}`);
   }
-  return [];
-});
-
-await check("the workers.dev fallback address does not leak the confidential area either", async () => {
-  const r = await fetchOnce(`${WORKERS_DEV_FALLBACK}/`, "follow");
-  if (r.status === 200) {
-    const body = await r.text();
-    if (/ACTIVE LEGAL PROCEEDINGS/i.test(body)) return ["served the real page with no Access login — NOT gated"];
-  }
-  return [];
+  for (const tag of ["form", "script", "iframe"]) if (liveDoc.querySelector(tag)) p.push(`contains <${tag}>`);
+  return p;
 });
 
 // -------------------------------------------------------------- report
@@ -189,7 +199,7 @@ console.log(failed ? `\n${failed} live check(s) failing.` : "\nAll live checks p
 if (process.env.GITHUB_STEP_SUMMARY) {
   fs.appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    `## darius.life live verification\n\n${results.map((r) => `- ${r.status === "PASS" ? "✅" : "❌"} ${r.name}${r.problems?.length ? `\n  - ${r.problems.join("\n  - ")}` : ""}`).join("\n")}\n`,
+    `## darius.life live verification\n\n${results.map((r) => `- ${r.status === "PASS" ? "✅" : r.status === "SKIP" ? "⏭️" : "❌"} ${r.name}${r.problems?.length ? `\n  - ${r.problems.join("\n  - ")}` : ""}`).join("\n")}\n`,
   );
 }
 process.exitCode = failed ? 1 : 0;

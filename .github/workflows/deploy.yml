@@ -1,4 +1,4 @@
-name: Deploy public page to GitHub Pages
+name: Build, deploy, and verify darius.life
 on:
   push:
     branches: [main]
@@ -22,9 +22,7 @@ jobs:
       - run: npm ci
       # checks/run-all.mjs detects GitHub Actions' own CI=true and, regardless of
       # LINKCHECK, always fetches every live link and always requires
-      # PROTECTED_STRINGS — the same strict build Cloudflare Pages runs for
-      # dist-confidential/. Two independent CI providers checking the same commit
-      # is deliberate: a push is only "built" once both agree.
+      # PROTECTED_STRINGS. Branch protection on main requires this job to pass.
       - run: npm run build
         env:
           PROTECTED_STRINGS: ${{ secrets.PROTECTED_STRINGS }}
@@ -32,7 +30,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-  deploy:
+
+  deploy-pages:
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -41,3 +40,29 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  deploy-worker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/private-legal
+          command: deploy
+
+  verify-live:
+    # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
+    # regression fails this job, which fails the workflow, which notifies. The
+    # daily-only run (verify-live.yml) is the one that reports without blocking.
+    needs: [deploy-pages, deploy-worker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+      - run: node checks/live.mjs

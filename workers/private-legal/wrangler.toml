@@ -1,0 +1,20 @@
+# Serves darius.life/legal/private/* from R2 only after verifying the Access JWT
+# itself (defense in depth — do not rely solely on Access having already checked
+# the request at the edge). See src/index.js and docs/cloudflare-setup.md.
+name = "darius-life-private-legal"
+main = "src/index.js"
+compatibility_date = "2026-09-27"
+
+[[routes]]
+pattern = "darius.life/legal/private/*"
+zone_name = "darius.life"
+
+[[r2_buckets]]
+binding = "PRIVATE_LEGAL"
+bucket_name = "darius-life-private"
+
+[vars]
+# Set to the real team domain and this Access application's AUD tag before first
+# deploy — see docs/cloudflare-setup.md. Wrong values fail closed (403), not open.
+ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE-ME"

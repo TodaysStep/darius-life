@@ -3,10 +3,10 @@
 // the Cloudflare Pages build, and a stopped build does not deploy.
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
-import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit } from "./lib.mjs";
+import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit, META_CSP, META_REFERRER } from "./lib.mjs";
 
 if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
   const r = spawnSync(process.execPath, process.argv.slice(1), {
@@ -18,9 +18,6 @@ if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
-// Separate build, separate host (Cloudflare Pages, confidential.darius.life, behind
-// Access) — never nested inside DIST, so never reachable from GitHub Pages.
-const DIST_CONFIDENTIAL = path.join(ROOT, "dist-confidential");
 const CI = process.env.CF_PAGES === "1" || process.env.CI === "true";
 const rel = (p) => path.relative(ROOT, p);
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
@@ -54,23 +51,6 @@ const STATUS_VOCABULARY = [
   "Handling something. Will update when there's something to say.",
 ];
 
-const REQUIRED_HEADERS = {
-  "Content-Security-Policy":
-    "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'",
-  "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-  "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-  "X-Frame-Options": "DENY",
-};
-
-// GitHub Pages sends no HTTP response headers at all. Of REQUIRED_HEADERS, only these
-// two have a <meta> equivalent — frame-ancestors/HSTS/nosniff/Permissions-Policy/
-// X-Frame-Options do not (the CSP spec itself ignores frame-ancestors, form-action and
-// base-uri when delivered via <meta>). See docs/github-pages-header-limits.md.
-const META_CSP = "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'";
-const META_REFERRER = "no-referrer";
-
 const TEXT_EXT = new Set([".html", ".txt", ".css", ".sha256", ".json", ".md", ".xml", ".svg", ".csv", ".ico", ""]);
 const walkFiles = (dir) =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
@@ -92,12 +72,8 @@ if (!fs.existsSync(indexFile)) {
 }
 const doc = loadDom(indexFile);
 const verifyDoc = fs.existsSync(verifyFile) ? loadDom(verifyFile) : null;
-const publicFiles = walkFiles(DIST);
-const confidentialFiles = fs.existsSync(DIST_CONFIDENTIAL) ? walkFiles(DIST_CONFIDENTIAL) : [];
-if (!confidentialFiles.length) console.warn("checks: dist-confidential/ is missing or empty — run `node src/build.mjs` first");
-const distFiles = [...publicFiles, ...confidentialFiles]; // both targets, for the checks that must hold everywhere
+const distFiles = walkFiles(DIST);
 const htmlFiles = distFiles.filter((f) => f.endsWith(".html"));
-const confidentialHtmlFiles = confidentialFiles.filter((f) => f.endsWith(".html"));
 const textFiles = distFiles.filter((f) => TEXT_EXT.has(path.extname(f)) || path.basename(f).startsWith("_"));
 const termsTxt = fs.existsSync(path.join(DIST, "terms.txt")) ? fs.readFileSync(path.join(DIST, "terms.txt"), "utf8") : null;
 const termsLock = read("terms.lock").trim();
@@ -237,6 +213,10 @@ await check(6, "Every link resolves", async () => {
         if (!allow.mailto.includes(addr)) p.push(`mailto address not approved: ${addr}`);
       } else if (href.startsWith("#")) {
         if (!d.getElementById(href.slice(1))) p.push(`${rel(file)}: in-page anchor ${href} has no target`);
+      } else if (href === "/legal/private/") {
+        // Served by workers/private-legal, not by this build — checked live
+        // (acceptance 5/6), not against dist/, and never fetched at build time
+        // (it requires an Access login this script doesn't have).
       } else if (href.startsWith("/")) {
         const target = path.join(DIST, href.endsWith("/") ? `${href}index.html` : href);
         if (!fs.existsSync(target)) p.push(`${href} is not in the build output`);
@@ -282,12 +262,6 @@ await check(7, "Destination allowlist", () => {
   if (verifyDoc) {
     for (const [tag, href] of hrefsOf(verifyDoc)) {
       if (tag === "a" ? !allow.verify.includes(href) : !RESOURCES.test(href)) p.push(`verify/index.html: <${tag}> destination not allowed: ${href}`);
-    }
-  }
-  for (const f of confidentialHtmlFiles) {
-    for (const [tag, href] of hrefsOf(loadDom(f))) {
-      const ok = tag === "a" ? /^\.\/[^/]+$/.test(href) && fs.existsSync(path.join(path.dirname(f), decodeURIComponent(href))) : RESOURCES.test(href);
-      if (!ok) p.push(`${rel(f)}: <${tag}> destination not allowed: ${href}`);
     }
   }
   const unused = allow.index.filter((h) => !doc.querySelector(`a[href="${h}"]`));
@@ -380,54 +354,28 @@ await check(12, "No tracking", () => {
   const p = [];
   const TRACKERS = /cloudflareinsights|beacon\.min\.js|googletagmanager|google-analytics|gtag\(|plausible|fathom|umami|matomo|segment\.io|hotjar|facebook\.net|pixel/i;
   for (const f of textFiles) if (TRACKERS.test(fs.readFileSync(f, "utf8"))) p.push(`${rel(f)} references a tracker`);
-  if (/set-cookie/i.test(read("confidential-site/_headers"))) p.push("confidential-site/_headers sets a cookie");
   return p;
 });
 
 // ---------------------------------------------------------------- 13
-// Two targets, two hosts, two enforcement mechanisms: GitHub Pages sends no HTTP
-// response headers at all (checked via <meta>, the only thing that reaches it),
-// Cloudflare Pages does (checked via _headers, as before).
-await check(13, "Security headers", () => {
+// The real headers are a Cloudflare Response Header Transform Rule
+// (cloudflare/rules.md) — a dashboard/zone-level object, not a file in this repo,
+// so it can't be asserted here. checks/live.mjs verifies it against the live site
+// instead. What IS checkable at build time is the <meta> fallback (holds even if
+// the page is reached without passing through Cloudflare) and robots.txt.
+await check(13, "Security headers (build-time: the <meta> fallback only)", () => {
   const p = [];
-  for (const doc_ of [
+  for (const [d, name] of [
     [doc, "index.html"],
     [verifyDoc, "verify/index.html"],
   ]) {
-    const [d, name] = doc_;
     if (!d) continue;
     const csp = d.querySelector('meta[http-equiv="Content-Security-Policy" i]')?.getAttribute("content");
     if (csp !== META_CSP) p.push(`${name}: meta CSP must be exactly "${META_CSP}" (found ${csp ? `"${csp}"` : "nothing"})`);
     const ref = d.querySelector('meta[name="referrer" i]')?.getAttribute("content");
     if (ref !== META_REFERRER) p.push(`${name}: <meta name="referrer"> must be "${META_REFERRER}" (found ${ref ? `"${ref}"` : "nothing"})`);
   }
-  if (!/^Allow: \/$/m.test(read("public/robots.txt")) || /Disallow/.test(read("public/robots.txt"))) {
-    p.push("public/robots.txt must allow everything (the public page has nothing to hide)");
-  }
-
-  for (const file of ["confidential-site/_headers", "dist-confidential/_headers"]) {
-    if (!fs.existsSync(path.join(ROOT, file))) {
-      p.push(`${file} missing`);
-      continue;
-    }
-    const rules = {};
-    let current = null;
-    for (const line of read(file).split("\n")) {
-      if (!line.trim() || line.trim().startsWith("#")) continue;
-      if (!/^\s/.test(line)) rules[(current = line.trim())] = {};
-      else if (current) {
-        const i = line.indexOf(":");
-        rules[current][line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
-      }
-    }
-    const all = rules["/*"] ?? {};
-    for (const [k, v] of Object.entries(REQUIRED_HEADERS)) {
-      if (all[k.toLowerCase()] !== v) p.push(`${file}: "/*" must set ${k}: ${v} (found ${all[k.toLowerCase()] ?? "nothing"})`);
-    }
-    if (!/noindex/i.test(all["x-robots-tag"] ?? "")) p.push(`${file}: "/*" must send X-Robots-Tag: noindex`);
-    if (!/no-store/i.test(all["cache-control"] ?? "")) p.push(`${file}: "/*" must send Cache-Control: no-store`);
-  }
-  if (!/^Disallow: \/$/m.test(read("confidential-site/robots.txt"))) p.push("confidential-site/robots.txt must disallow everything");
+  if (!/^Disallow: \/legal\/private\/$/m.test(read("public/robots.txt"))) p.push("public/robots.txt must disallow /legal/private/");
   return p;
 });
 
@@ -500,6 +448,38 @@ await check(16, "/verify present", () => {
   const want = manifest.items.find((i) => i.id === "terms")?.effective;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eff ?? "") || eff !== want) p.push(`/verify effective date "${eff}" must equal the manifest's "${want}"`);
   for (const h of ["/terms.txt", "/terms.sha256"]) if (!verifyDoc.querySelector(`a[href="${h}"]`)) p.push(`/verify does not link ${h}`);
+  return p;
+});
+
+// ---------------------------------------------------------------- 17
+await check(17, "Private documents never on GitHub", () => {
+  const p = [];
+  const isPrivatePath = (p_) => /(^|\/)legal\/private(\/|$)/.test(p_) && !p_.startsWith("workers/private-legal/");
+  let tracked = [];
+  try {
+    tracked = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter(Boolean);
+  } catch (e) {
+    return [`could not list git-tracked files: ${e.message}`];
+  }
+  const trackedOffenders = tracked.filter(isPrivatePath);
+  if (trackedOffenders.length) p.push(`tracked in git: ${trackedOffenders.join(", ")}`);
+  const distOffenders = distFiles.map((f) => rel(f)).filter(isPrivatePath);
+  if (distOffenders.length) p.push(`generated into dist/: ${distOffenders.join(", ")}`);
+  return p;
+});
+
+// ---------------------------------------------------------------- 18
+await check(18, "Live verification gates the workflow", () => {
+  const p = [];
+  const wf = fs.existsSync(path.join(ROOT, ".github/workflows/deploy.yml")) ? read(".github/workflows/deploy.yml") : null;
+  if (!wf) return [".github/workflows/deploy.yml is missing"];
+  if (!/checks\/live\.mjs/.test(wf)) p.push("deploy.yml has no job running checks/live.mjs");
+  const liveJobMatch = wf.match(/^\s{2}(\S+):\n(?:(?!^\s{2}\S+:).*\n)*?.*checks\/live\.mjs.*$/m);
+  if (liveJobMatch) {
+    const jobBlock = liveJobMatch[0];
+    if (/continue-on-error:\s*true/.test(jobBlock)) p.push("deploy.yml's live-verification job has continue-on-error: true — it must be able to fail the workflow");
+  }
+  if (!fs.existsSync(path.join(ROOT, "checks/live.mjs"))) p.push("checks/live.mjs is missing");
   return p;
 });
 

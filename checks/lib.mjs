@@ -7,6 +7,24 @@ import { JSDOM } from "jsdom";
 
 export const sha256 = (s) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
 
+// Brief v2.1 section 8 check 13. Applied zone-wide by a Cloudflare Response Header
+// Transform Rule (cloudflare/rules.md) — not checkable from a build, only live
+// (checks/live.mjs). The <meta> versions are the fallback that holds even if the
+// page is somehow reached without passing through Cloudflare; frame-ancestors,
+// form-action and base-uri are dropped there because the CSP spec ignores them
+// when delivered via <meta> rather than a real header.
+export const REQUIRED_HEADERS = {
+  "content-security-policy":
+    "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'",
+  "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "x-frame-options": "DENY",
+};
+export const META_CSP = "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'";
+export const META_REFERRER = "no-referrer";
+
 const BLOCK = new Set([
   "P", "DIV", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6",
   "SECTION", "HEADER", "FOOTER", "MAIN", "BLOCKQUOTE",

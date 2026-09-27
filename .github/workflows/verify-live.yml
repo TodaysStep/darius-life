@@ -14,10 +14,10 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm ci
-      # Reports only — this workflow never blocks a deploy. It exists to catch a live
-      # regression (a header dropped, a link gone dead, DNS for confidential.darius.life
-      # breaking again) between pushes, since nothing else runs on a schedule.
-      - run: node checks/verify-live.mjs
+      # Reports only — this workflow never blocks a deploy (deploy.yml's own
+      # verify-live job does that, on every push). This one exists to catch a live
+      # regression between pushes, since nothing else runs on a schedule.
+      - run: node checks/live.mjs
         continue-on-error: true
         id: verify
       - if: steps.verify.outcome == 'failure'
