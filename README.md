@@ -11,21 +11,24 @@ live, `npm run verify-live` (also runs daily via
 the brief's Section 10 acceptance checks — separate from `npm run build`,
 which only checks local build output.
 
-**Two builds, two hosts, deliberately.** Nothing on the public page is secret —
-only the confidential legal area needs real access control, and GitHub Pages
-cannot provide that (see "Hosting" below). So `src/build.mjs` writes two
-separate outputs from one source repo:
+**Brief version 2.1 architecture.** The public page and the private legal
+area share one domain, `darius.life`. This repository is public — nothing in
+it may ever be secret (see "The private legal area" below) — so it holds no
+access-controlled content at all, only the code that serves it:
 
-| | public page | confidential legal area |
+| | public page | private legal area |
 |---|---|---|
-| output | `dist/` | `dist-confidential/` |
-| source | everything except `legal/confidential/` | `legal/confidential/` |
-| host | GitHub Pages | Cloudflare Pages + Access |
-| bill this depends on | none — a different company, free forever | Cloudflare Pages itself is also free; only the account it's on needs to stay in good standing |
+| served from | `dist/` (static files, built by `src/build.mjs`) | R2 bucket `darius-life-private`, never this repo |
+| served by | GitHub Pages | Cloudflare Worker `workers/private-legal`, at the same domain's `/legal/private/*` route |
+| gated by | nothing — public | Cloudflare Access (one-time PIN), independently re-verified by the Worker itself |
+| headers | GitHub Pages sends none; the `<meta>` CSP/referrer-policy fallback in the page covers what a `<meta>` tag can | the same Cloudflare Transform Rule that fronts the public page also covers the Worker's responses |
 
-This repository does not need to be private — nothing in `dist/` is secret. It
-stays private anyway because `legal/confidential/` (documents you place there,
-never the built site) does.
+The whole domain sits behind Cloudflare as a proxy (once DNS-only cutover is
+confirmed working — see `cloudflare/rules.md`), which is what injects the
+security headers GitHub Pages itself cannot send. This is a deliberate,
+approved reversal of an earlier design (splitting hosting across
+`confidential.darius.life` specifically to avoid any Cloudflare dependency for
+the public page) — see `docs/handoff-2026-09-27.md` for why.
 
 ## Change your status
 
@@ -75,85 +78,99 @@ fetching it. The build accepts a Medium link only when the post is listed in
 proof for that exact URL. The feed holds the ten newest posts, so a new article
 passes on its own; an older one needs a recorded proof.
 
-## The confidential legal area
+## The private legal area
 
-Put documents in `legal/confidential/`. They build into `dist-confidential/`,
-a completely separate output that Cloudflare Pages deploys to
-`confidential.darius.life`, behind Cloudflare Access (one-time PIN to the
-addresses in the Access policy). They are never copied into `dist/`, so they
-can never reach GitHub Pages, which has no access control at all. The build
-writes an index page listing them unless you provide `index.html`. Every
-response from that host sends `Cache-Control: private, no-store` and
-`X-Robots-Tag: noindex`.
+Documents live only in the R2 bucket `darius-life-private` — never in this
+repo, which is public. `workers/private-legal` serves them at
+`darius.life/legal/private/*`: it independently verifies the
+`Cf-Access-Jwt-Assertion` header (RS256 signature against the Access team's
+published JWKS, `exp`/`nbf`, `aud`) before touching R2 at all, rather than
+trusting that Cloudflare Access alone already gated the request. It writes an
+index page listing the bucket's objects unless one provides its own
+`index.html`. Every response sends `Cache-Control: private, no-store` and
+`X-Robots-Tag: noindex`. See `workers/private-legal/src/index.test.mjs` for
+the 8 tests covering the JWT verification (a real signed token, then seven
+ways to break it).
 
-The build refuses to publish (either target) if your mailing address or phone
-number (the `PROTECTED_STRINGS` secret) appears in any output file. A document
-that must contain them cannot be placed here as-is. Text inside compressed PDF
-streams cannot be read by the check.
+The build refuses to publish the public page if your mailing address or phone
+number (the `PROTECTED_STRINGS` secret) appears in any tracked or generated
+file. Check 17 (`checks/run-all.mjs`) separately fails the build outright if
+any `legal/private/*` path is ever tracked in git or written into `dist/`,
+since that content must never leave R2.
 
 ## Checks
 
-`npm run build` runs all sixteen requirements in Section 8 of the brief, against
-both outputs. Locally:
+`npm run build` runs all 18 checks in Section 8 of the brief against the
+build output. Locally:
 
 - `LINKCHECK=skip npm run build` skips fetching live links. Both CI providers
-  (GitHub Actions and Cloudflare Pages) set `CI`/`CF_PAGES`, which the check
+  (GitHub Actions and Cloudflare) set `CI`/`CF_PAGES`, which the check
   detects and always fetches every link regardless of `LINKCHECK` — the skip
   only ever applies to a local run.
 - Without `PROTECTED_STRINGS` set, check 9 is skipped locally and fails under
-  either CI provider.
+  CI.
+- `node checks/live.mjs` (`npm run verify-live`) checks the real deployed
+  site instead of build output — headers, the private area's access gate,
+  the direct-origin check — none of which a local build can verify.
 
 ## Hosting
 
-**Public page — GitHub Pages, via GitHub Actions** (`.github/workflows/pages.yml`).
-Repo Settings → Pages → Source: **GitHub Actions**. No Cloudflare product is
-involved in serving this page at all. Add repo secret `PROTECTED_STRINGS` (same
-value as the Cloudflare one below) so the workflow can run check 9.
+Both the public page and the private legal area are served on `darius.life`
+itself, fronted by Cloudflare as a reverse proxy — see `cloudflare/rules.md`
+for the exact zone configuration (DNS, the Response Header Transform Rule,
+the Access application) and its required ordering (DNS-only until GitHub
+issues its certificate, proxied only after).
 
-**Confidential area — Cloudflare Pages project `darius-life-confidential`**:
-production branch `main`, build command `npm run build`, output directory
-`dist-confidential`, Node 20 (`.node-version`). Secret: `PROTECTED_STRINGS`
-(production and preview), one string per line — the build fails without it.
+**Public page — GitHub Pages, via GitHub Actions**
+(`.github/workflows/deploy.yml`, job `build` + `deploy-pages`). Repo Settings
+→ Pages → Source: **GitHub Actions**. Repo secret `PROTECTED_STRINGS` (your
+mailing address and phone number, one per line) is required for check 9 to
+pass.
 
-Why two Cloudflare Pages projects don't make sense here (rather than one
-project serving both directories): Pages custom domains are per-project, and
-`darius.life` and `confidential.darius.life` need to end up on different
-hosts entirely (GitHub vs. Cloudflare) — one project can't do that.
+**Private legal area — Cloudflare Worker `darius-life-private-legal`**, via
+the same workflow's `deploy-worker` job (`cloudflare/wrangler-action@v4`,
+`workingDirectory: workers/private-legal`). Repo secrets
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are required. Before the
+first deploy, create the R2 bucket `darius-life-private` and set
+`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` in `workers/private-legal/wrangler.toml`'s
+`[vars]` to the real Cloudflare Access team domain and this Access
+application's AUD tag — both fail closed (a wrong value returns 403, never
+200).
 
 ### Domains
 
 - `darius.life` and `www.darius.life`: GitHub Pages custom domain (a `CNAME`
-  file, written by the build to `dist/CNAME` — see `content/manifest.json`'s
-  absence of it; it's static, not manifest-driven, since it never changes).
-  GitHub auto-redirects whichever of the two isn't the configured canonical
-  domain to the other; no `_redirects` rule is needed or possible on GitHub
-  Pages.
-- `confidential.darius.life`: Cloudflare Pages custom domain, attached to the
-  `darius-life-confidential` project.
+  file, written by the build to `dist/CNAME`) for the public page; the same
+  hostname's `/legal/private/*` path routes to the Worker instead, per the
+  Worker's own `[[routes]]` block in `workers/private-legal/wrangler.toml`.
+  `www` redirects to the apex via a Cloudflare Redirect Rule (`cloudflare/rules.md`)
+  now that the domain is proxied, rather than GitHub Pages' own redirect.
 
-The platform's gateway Worker must have no route on either hostname; see
+The platform's gateway Worker must have no route on `darius.life` or
+`*.darius.life`; see
 `.lovable/memory/constraints/darius-life-personal-index.md` in
 `TodaysStep/posteritycloud-infra`.
 
 ### Cloudflare Access
 
-Self-hosted application covering the whole `darius-life-confidential`
-project's hostnames: `confidential.darius.life` and
-`darius-life-confidential.pages.dev`. Without the `pages.dev` entry the same
-files are reachable on the project's own address. Policy: allow the listed
-emails, one-time PIN; deny everyone else.
+Self-hosted application covering `darius.life/legal/private/*` only — not the
+whole domain, since the public page must stay ungated. Policy: allow the
+listed emails, one-time PIN; deny everyone else. See `cloudflare/rules.md`.
 
 ### What GitHub Pages can't do
 
 No custom HTTP response headers — `Strict-Transport-Security`,
 `X-Content-Type-Options`, `X-Frame-Options`, `Permissions-Policy`, and the
-`frame-ancestors`/`form-action`/`base-uri` CSP directives, are all header-only
+`frame-ancestors`/`form-action`/`base-uri` CSP directives are all header-only
 and cannot be replicated in static HTML. `src/template.html` and
 `src/verify.html` set what a `<meta>` tag can (`Content-Security-Policy`'s
-remaining directives, `Referrer-Policy`); `checks/run-all.mjs` checks those
-instead of a headers file for this target. See
-`docs/github-pages-header-limits.md`. The confidential area keeps every header
-in full, since it stays on Cloudflare Pages.
+remaining directives, `Referrer-Policy`) as a fallback that still applies even
+if the Transform Rule below were ever misconfigured; `checks/run-all.mjs`
+(check 13) checks those meta tags at build time. The real, complete header
+set is a zone-level Cloudflare Response Header Transform Rule
+(`cloudflare/rules.md`), applying to both the GitHub Pages origin and the
+private-legal Worker — `checks/live.mjs` verifies it live, since it can't be
+checked from build output. See `docs/github-pages-header-limits.md`.
 
 ### Email
 

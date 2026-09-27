@@ -1,7 +1,7 @@
 # Headers GitHub Pages cannot send
 
-GitHub Pages serves this output as plain static files and does not support a
-`_headers` mechanism, so none of the following can be set for the public site:
+GitHub Pages serves the public page as plain static files and does not
+support a `_headers` mechanism, so none of the following can be set there:
 
 - `Strict-Transport-Security`
 - `X-Content-Type-Options`
@@ -14,7 +14,13 @@ GitHub Pages serves this output as plain static files and does not support a
 `src/template.html` and `src/verify.html` set what a `<meta>` tag actually can:
 `default-src`/`style-src`/`font-src`/`img-src`/`script-src` and
 `Referrer-Policy`. `checks/run-all.mjs` (check 13) verifies those meta tags
-instead of a headers file for this target.
+at build time, since that's all a build can check.
 
-The confidential area (`confidential-site/_headers`) stays on Cloudflare Pages
-and keeps every header, unaffected by any of this.
+The real, complete header set — all six headers, for every response on
+`darius.life`, including the private-legal Worker's — comes from a
+zone-level Cloudflare Response Header Transform Rule, applied once the whole
+domain is proxied through Cloudflare. See `cloudflare/rules.md` for the exact
+rule and `docs/handoff-2026-09-27.md` for why the domain is proxied at all
+(brief version 2.1, superseding an earlier design that avoided any Cloudflare
+dependency for the public page). `checks/live.mjs` verifies the live headers
+against the real site, since a build can't see a zone-level rule.
