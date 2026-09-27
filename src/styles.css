@@ -1,0 +1,174 @@
+@font-face {
+  font-family: "Courier Prime";
+  src: url("/assets/fonts/courier-prime/CourierPrime-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+}
+
+@font-face {
+  font-family: "Courier Prime";
+  src: url("/assets/fonts/courier-prime/CourierPrime-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: optional;
+}
+
+html {
+  background: #F6F3EE;
+  color: #111111;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: #F6F3EE;
+  color: #111111;
+  font-family: "Courier Prime", "Courier New", Courier, monospace;
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.page {
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: 64px 24px 72px;
+}
+
+h1 {
+  font-size: 1.3em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 0.6em;
+}
+
+h2,
+.section-heading {
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+h2 {
+  border-top: 1px solid rgba(17, 17, 17, 0.4);
+  margin: 2.5em 0 1em;
+  padding-top: 1.5em;
+}
+
+.section-heading {
+  margin: 0 0 1em;
+}
+
+h3 {
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 1.5em 0 0.5em;
+}
+
+p {
+  margin: 0 0 1em;
+}
+
+strong {
+  font-weight: 700;
+}
+
+a,
+a:visited {
+  color: #111111;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+a:focus-visible {
+  outline: 2px solid #111111;
+  outline-offset: 3px;
+}
+
+.indicators {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 3ch;
+  row-gap: 0.2em;
+  margin: 0 0 1.5em;
+  font-size: 0.88em;
+}
+
+.indicators p {
+  margin: 0;
+}
+
+.dot {
+  font-size: 0.7em;
+  vertical-align: 0.1em;
+  color: #111111;
+}
+
+.state {
+  font-size: 0.88em;
+  margin-left: 1ch;
+  white-space: nowrap;
+}
+
+ul {
+  list-style: none;
+  margin: 0 0 1em;
+  padding: 0;
+}
+
+li {
+  margin: 0 0 0.6em;
+}
+
+ul.sub {
+  margin: 0.4em 0 0;
+  padding-left: 3ch;
+}
+
+.block {
+  margin: 0 0 1.5em;
+}
+
+footer {
+  margin-top: 4em;
+  font-size: 0.88em;
+}
+
+footer p {
+  margin: 0 0 0.4em;
+}
+
+code {
+  font-family: inherit;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 768px) {
+  body {
+    font-size: 18px;
+  }
+
+  .page {
+    padding: 64px 48px 96px;
+  }
+}
+
+@media print {
+  a::after {
+    content: " (" attr(href) ")";
+    overflow-wrap: anywhere;
+  }
+
+  a.internal::after {
+    content: "";
+  }
+}

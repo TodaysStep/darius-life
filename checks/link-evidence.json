@@ -1,0 +1,14 @@
+{
+  "botWalledHosts": {
+    "darius.medium.com": {
+      "why": "Medium answers every automated request, including real headless browsers, with a Cloudflare challenge (HTTP 403, cf-mitigated: challenge). A missing post returns the same 403, so the challenge alone proves nothing.",
+      "feed": "https://medium.com/feed/@darius"
+    }
+  },
+  "recorded": {
+    "https://darius.medium.com/design-educators-in-exile-the-forgotten-architects-of-civic-stability-836f51f6112b": {
+      "provedAt": "2026-09-27",
+      "method": "Listed as an item link in https://medium.com/feed/@darius (HTTP 200)."
+    }
+  }
+}

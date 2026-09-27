@@ -1,0 +1,16 @@
+{
+  "name": "darius-life",
+  "private": true,
+  "type": "module",
+  "description": "darius.life — Michael Darius's personal index.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node src/build.mjs && node checks/run-all.mjs",
+    "check": "node checks/run-all.mjs",
+    "lock": "node src/build.mjs --write-locks && node checks/run-all.mjs"
+  },
+  "dependencies": {
+    "axe-core": "4.10.3",
+    "jsdom": "26.1.0"
+  }
+}
