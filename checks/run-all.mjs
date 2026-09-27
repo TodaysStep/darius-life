@@ -316,7 +316,7 @@ await check(10, "Status vocabulary", () => {
   const shown = doc.querySelector('[data-dynamic="status"]')?.textContent;
   if (shown !== status.personal) p.push(`page shows status "${shown}" instead of "${status.personal}"`);
   for (const id of projectIds) {
-    const want = projects[id] === "paused" ? "○ Paused" : "● Active";
+    const want = projects[id] === "paused" ? "Status: Paused" : "Status: Active";
     const got = doc.querySelector(`[data-id="projects.${id}"] [data-dynamic="project"]`)?.textContent.replace(/\s+/g, " ").trim();
     if (got !== want) p.push(`projects.${id} shows "${got}" instead of "${want}"`);
   }
@@ -480,6 +480,21 @@ await check(18, "Live verification gates the workflow", () => {
     if (/continue-on-error:\s*true/.test(jobBlock)) p.push("deploy.yml's live-verification job has continue-on-error: true — it must be able to fail the workflow");
   }
   if (!fs.existsSync(path.join(ROOT, "checks/live.mjs"))) p.push("checks/live.mjs is missing");
+  return p;
+});
+
+// ---------------------------------------------------------------- 19
+// No email address or contact path on the public page at all — everything is
+// arranged "through correspondence" instead. Independent of check 6/7's mailto
+// allowlist, which only catches addresses inside an actual mailto: link; this
+// catches an email address written anywhere, in any file, linked or not.
+await check(19, "No email address anywhere in the build", () => {
+  const p = [];
+  const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+  for (const f of textFiles) {
+    const found = fs.readFileSync(f, "utf8").match(EMAIL);
+    if (found) p.push(`${rel(f)} contains an email address: ${[...new Set(found)].join(", ")}`);
+  }
   return p;
 });
 

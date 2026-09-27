@@ -49,9 +49,6 @@ export const plainText = (md) =>
     )
     .join("\n\n");
 
-const DOT = { active: "●", paused: "○" };
-const dot = (ch) => `<span class="dot" aria-hidden="true">${ch}</span>`;
-
 function lastUpdated() {
   try {
     const d = execFileSync("git", ["log", "-1", "--format=%cs"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -73,7 +70,7 @@ function renderItem(item, ctx) {
         item.dynamic === "status"
           ? ` <span data-dynamic="status">${esc(ctx.status.personal)}</span>`
           : inline(item.note ?? "");
-      return `<p class="indicator" ${id}>${dot("●")} ${label()}${tail}</p>`;
+      return `<p class="indicator" ${id}>${label()}${tail}</p>`;
     }
     case "prose":
       return `<div class="prose" ${id}>\n${renderBlocks(read(item.source))}\n</div>`;
@@ -90,7 +87,7 @@ function renderItem(item, ctx) {
       let state = "";
       if (item.dynamic === "project") {
         const s = ctx.projects[item.id.slice("projects.".length)];
-        state = ` <span class="state" data-dynamic="project">${dot(DOT[s] ?? "?")} ${s === "paused" ? "Paused" : s === "active" ? "Active" : esc(String(s))}</span>`;
+        state = ` <span class="state" data-dynamic="project">Status: ${s === "paused" ? "Paused" : s === "active" ? "Active" : esc(String(s))}</span>`;
       }
       return `<span ${id}>${label()}${note}${state}</span>`;
     }

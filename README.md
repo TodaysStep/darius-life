@@ -100,7 +100,7 @@ since that content must never leave R2.
 
 ## Checks
 
-`npm run build` runs all 18 checks in Section 8 of the brief against the
+`npm run build` runs all 19 checks in Section 8 of the brief against the
 build output. Locally:
 
 - `LINKCHECK=skip npm run build` skips fetching live links. Both CI providers
