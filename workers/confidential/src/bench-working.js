@@ -18,6 +18,7 @@
 import { requireAccess } from "../../shared/access.js";
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
+import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
 export const PREFIX = "/bench/";
@@ -30,137 +31,30 @@ function errorPage(message) {
   return benchPage("Error", `<h1>Something went wrong</h1><p class="error">Nothing was saved. ${escapeHtml(message)}</p><p class="note"><a href="${PREFIX}">Back to Bench Notes</a></p>`);
 }
 
-// --- D1 access — the only functions in this file that touch the database ---
+// --- D1 access — thin adapters over workers/shared/bench-data.js, the one
+// place these operations are actually implemented (the machine API at
+// workers/private-legal/src/bench-api.js calls the exact same functions —
+// no second copy of what "publish," "share," or "revoke" means). ---
 
-async function listCases(env) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT id, title, court, case_number, status FROM cases ORDER BY updated_at DESC",
-  ).all();
-  return results;
-}
-
-async function getCase(env, id) {
-  return env.BENCH_NOTES.prepare("SELECT * FROM cases WHERE id = ?").bind(id).first();
-}
-
-async function createCase(env, { id, title, court, caseNumber }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO cases (id, title, court, case_number) VALUES (?, ?, ?, ?)",
-  ).bind(id, title, court || null, caseNumber || null).run();
-}
-
-async function listEntries(env, caseId) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",
-  ).bind(caseId).all();
-  return results;
-}
-
-async function addEntry(env, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways }) {
-  await env.BENCH_NOTES.prepare(
-    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null).run();
-  await env.BENCH_NOTES.prepare("UPDATE cases SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").bind(caseId).run();
-}
-
-async function setEntryShared(env, id, shared) {
-  await env.BENCH_NOTES.prepare(
-    `UPDATE docket_entries SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
-  ).bind(id).run();
-}
-
-async function listGlossary(env, caseId) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT * FROM glossary_terms WHERE case_id = ? OR case_id IS NULL ORDER BY term COLLATE NOCASE",
-  ).bind(caseId).all();
-  return results;
-}
-
-async function addGlossaryTerm(env, { id, caseId, term, definition }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO glossary_terms (id, case_id, term, definition) VALUES (?, ?, ?, ?)",
-  ).bind(id, caseId, term, definition).run();
-}
-
-async function listPatterns(env, caseId) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT * FROM patterns WHERE case_id = ? ORDER BY updated_at DESC",
-  ).bind(caseId).all();
-  return results;
-}
-
-async function addPattern(env, { id, caseId, subjectType, subjectName, description }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO patterns (id, case_id, subject_type, subject_name, description) VALUES (?, ?, ?, ?, ?)",
-  ).bind(id, caseId, subjectType, subjectName, description).run();
-}
-
-// Documents are the one working-side-managed table the entrusted side also
-// reads — Darius adds a reference here (the file itself lives in the Lovable
-// document viewer or R2; storage_ref just points at it) and explicitly shares
-// it. Nothing is shared automatically.
-async function listDocuments(env, caseId) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT * FROM documents WHERE case_id = ? ORDER BY created_at DESC",
-  ).bind(caseId).all();
-  return results;
-}
-
-async function addDocument(env, { id, caseId, caseLabel, entryId, title, storageRef, filedDate }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).bind(id, caseId, caseLabel, entryId || null, title, storageRef, filedDate || null).run();
-}
-
-async function setDocumentShared(env, id, shared) {
-  await env.BENCH_NOTES.prepare(
-    `UPDATE documents SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
-  ).bind(id).run();
-}
-
-// Entrusted notes — occasional notes Darius writes directly TO the entrusted
-// side. Distinct from commentary (working-side, never shared): these are
-// written knowing a guest will read them, and go out immediately, not behind
-// a share toggle.
-async function listEntrustedNotes(env, caseId) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT * FROM entrusted_notes WHERE case_id = ? ORDER BY created_at DESC",
-  ).bind(caseId).all();
-  return results;
-}
-
-async function addEntrustedNote(env, { id, caseId, caseLabel, body }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO entrusted_notes (id, case_id, case_label, body) VALUES (?, ?, ?, ?)",
-  ).bind(id, caseId, caseLabel, body).run();
-}
-
-// Entrusted access grants — the single universal passphrase per grant, scoped
-// to specific cases, revocable. Creating/revoking a grant is a working-side
-// admin action; bench-entrusted.js only ever reads a grant by its code_hash.
-async function listGrants(env) {
-  const { results } = await env.BENCH_NOTES.prepare(
-    "SELECT id, label, case_ids_json, created_at, revoked_at FROM access_grants ORDER BY created_at DESC",
-  ).all();
-  return results;
-}
-
-async function createGrant(env, { id, codeHash, caseIds, label }) {
-  await env.BENCH_NOTES.prepare(
-    "INSERT INTO access_grants (id, code_hash, case_ids_json, label) VALUES (?, ?, ?, ?)",
-  ).bind(id, codeHash, JSON.stringify(caseIds), label || null).run();
-}
-
-async function revokeGrant(env, id) {
-  await env.BENCH_NOTES.prepare(
-    "UPDATE access_grants SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND revoked_at IS NULL",
-  ).bind(id).run();
-}
-
-async function updateGrantPassphrase(env, id, newCodeHash) {
-  await env.BENCH_NOTES.prepare("UPDATE access_grants SET code_hash = ? WHERE id = ?").bind(newCodeHash, id).run();
-}
+const listCases = (env) => data.listCases(env.BENCH_NOTES);
+const getCase = (env, id) => data.getCase(env.BENCH_NOTES, id);
+const createCase = (env, fields) => data.createCase(env.BENCH_NOTES, fields);
+const listEntries = (env, caseId) => data.listEntries(env.BENCH_NOTES, caseId);
+const addEntry = (env, fields) => data.addEntry(env.BENCH_NOTES, fields);
+const setEntryShared = (env, id, shared) => data.setEntryShared(env.BENCH_NOTES, id, shared);
+const listGlossary = (env, caseId) => data.listGlossary(env.BENCH_NOTES, caseId);
+const addGlossaryTerm = (env, fields) => data.addGlossaryTerm(env.BENCH_NOTES, fields);
+const listPatterns = (env, caseId) => data.listPatterns(env.BENCH_NOTES, caseId);
+const addPattern = (env, fields) => data.addPattern(env.BENCH_NOTES, fields);
+const listDocuments = (env, caseId) => data.listDocuments(env.BENCH_NOTES, caseId);
+const addDocument = (env, fields) => data.addDocument(env.BENCH_NOTES, fields);
+const setDocumentShared = (env, id, shared) => data.setDocumentShared(env.BENCH_NOTES, id, shared);
+const listEntrustedNotes = (env, caseId) => data.listEntrustedNotes(env.BENCH_NOTES, caseId);
+const addEntrustedNote = (env, fields) => data.addEntrustedNote(env.BENCH_NOTES, fields);
+const listGrants = (env) => data.listGrants(env.BENCH_NOTES);
+const createGrant = (env, fields) => data.createGrant(env.BENCH_NOTES, fields);
+const revokeGrant = (env, id) => data.revokeGrant(env.BENCH_NOTES, id);
+const updateGrantPassphrase = (env, id, newCodeHash) => data.updateGrantPassphrase(env.BENCH_NOTES, id, newCodeHash);
 
 // --- Rendering ---
 

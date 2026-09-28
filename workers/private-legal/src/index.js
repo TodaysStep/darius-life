@@ -1,15 +1,18 @@
 // Router for everything this Worker serves on darius.life: the private legal
 // area (src/legal.js), the status/projects control panel (src/control.js),
-// and Bench Notes' entrusted side (src/bench-entrusted.js). Bench Notes'
-// working side moved to its own Worker on confidential.darius.life
-// (workers/confidential/) on 2026-09-28, to reuse that hostname's existing
-// Cloudflare Access application rather than gating darius.life itself.
-// legal.js/control.js independently verify the Access JWT themselves — see
-// src/access.js. bench-entrusted.js is its own auth boundary (a passphrase,
-// not Access) — see that file's own header for why.
+// Bench Notes' entrusted side (src/bench-entrusted.js), and Bench Notes'
+// machine API (src/bench-api.js — the publishing desk's write surface).
+// Bench Notes' working-side HTML UI moved to its own Worker on
+// confidential.darius.life (workers/confidential/) on 2026-09-28, to reuse
+// that hostname's existing Cloudflare Access application rather than gating
+// darius.life itself. legal.js/control.js independently verify the Access
+// JWT themselves — see src/access.js. bench-entrusted.js and bench-api.js
+// are each their own auth boundary (a passphrase; a bearer secret) — see
+// their own headers for why neither is behind Access.
 import { PREFIX as LEGAL_PREFIX, handleLegalPrivate, renderIndex } from "./legal.js";
 import { PREFIX as CONTROL_PREFIX, handleControlGet, handleControlPost } from "./control.js";
 import { PREFIX as BENCH_ENTRUSTED_PREFIX, handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
+import { PREFIX as BENCH_API_PREFIX, handleBenchApi } from "./bench-api.js";
 import { verifyAccessJwt, base64UrlToJson, resetCertsCacheForTests } from "../../shared/access.js";
 
 export default {
@@ -29,6 +32,8 @@ export default {
       if (request.method === "POST") return handleBenchEntrustedPost(request, env, url);
       return new Response("Method Not Allowed", { status: 405 });
     }
+
+    if (url.pathname.startsWith(BENCH_API_PREFIX)) return handleBenchApi(request, env, url);
 
     return new Response("Not Found", { status: 404 });
   },

@@ -1,0 +1,157 @@
+// Bench Notes' working-side data-access layer — cases, docket_entries,
+// glossary_terms, patterns, documents, entrusted_notes, access_grants.
+// The single source of truth both the HTML UI (workers/confidential/src/
+// bench-working.js) and the machine API (workers/private-legal/src/
+// bench-api.js) call — no duplicate implementation of what a "publish,"
+// "share," or "revoke" operation actually does to the database. Every
+// function takes a D1Database (`db`, i.e. env.BENCH_NOTES) as its first
+// argument, same convention as workers/shared/bench-entrusted-view.js.
+
+export async function listCases(db) {
+  const { results } = await db.prepare(
+    "SELECT id, title, court, case_number, status FROM cases ORDER BY updated_at DESC",
+  ).all();
+  return results;
+}
+
+export async function getCase(db, id) {
+  return db.prepare("SELECT * FROM cases WHERE id = ?").bind(id).first();
+}
+
+export async function createCase(db, { id, title, court, caseNumber }) {
+  await db.prepare(
+    "INSERT INTO cases (id, title, court, case_number) VALUES (?, ?, ?, ?)",
+  ).bind(id, title, court || null, caseNumber || null).run();
+}
+
+export async function listEntries(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",
+  ).bind(caseId).all();
+  return results;
+}
+
+export async function getEntry(db, id) {
+  return db.prepare("SELECT * FROM docket_entries WHERE id = ?").bind(id).first();
+}
+
+export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways }) {
+  await db.prepare(
+    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null).run();
+  await db.prepare("UPDATE cases SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").bind(caseId).run();
+}
+
+export async function updateEntry(db, id, { fact, recommendedDirection, commentary, courtTakeaways }) {
+  await db.prepare(
+    `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?,
+     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+  ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, id).run();
+}
+
+export async function setEntryShared(db, id, shared) {
+  await db.prepare(
+    `UPDATE docket_entries SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
+  ).bind(id).run();
+}
+
+export async function listGlossary(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM glossary_terms WHERE case_id = ? OR case_id IS NULL ORDER BY term COLLATE NOCASE",
+  ).bind(caseId).all();
+  return results;
+}
+
+export async function addGlossaryTerm(db, { id, caseId, term, definition }) {
+  await db.prepare(
+    "INSERT INTO glossary_terms (id, case_id, term, definition) VALUES (?, ?, ?, ?)",
+  ).bind(id, caseId, term, definition).run();
+}
+
+export async function listPatterns(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM patterns WHERE case_id = ? ORDER BY updated_at DESC",
+  ).bind(caseId).all();
+  return results;
+}
+
+export async function addPattern(db, { id, caseId, subjectType, subjectName, description }) {
+  await db.prepare(
+    "INSERT INTO patterns (id, case_id, subject_type, subject_name, description) VALUES (?, ?, ?, ?, ?)",
+  ).bind(id, caseId, subjectType, subjectName, description).run();
+}
+
+// Documents are the one working-side-managed table the entrusted side also
+// reads — Darius (or now the publishing desk, on his behalf) adds a
+// reference here (the file itself lives in the Lovable document viewer or
+// R2; storage_ref just points at it) and explicitly shares it. Nothing is
+// shared automatically.
+export async function listDocuments(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM documents WHERE case_id = ? ORDER BY created_at DESC",
+  ).bind(caseId).all();
+  return results;
+}
+
+export async function getDocument(db, id) {
+  return db.prepare("SELECT * FROM documents WHERE id = ?").bind(id).first();
+}
+
+export async function addDocument(db, { id, caseId, caseLabel, entryId, title, storageRef, filedDate }) {
+  await db.prepare(
+    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, caseId, caseLabel, entryId || null, title, storageRef, filedDate || null).run();
+}
+
+export async function setDocumentShared(db, id, shared) {
+  await db.prepare(
+    `UPDATE documents SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
+  ).bind(id).run();
+}
+
+// Entrusted notes — occasional notes Darius (or the desk, on his behalf)
+// writes directly TO the entrusted side. Distinct from commentary
+// (working-side, never shared): these are written knowing a guest will
+// read them, and go out immediately, not behind a share toggle.
+export async function listEntrustedNotes(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM entrusted_notes WHERE case_id = ? ORDER BY created_at DESC",
+  ).bind(caseId).all();
+  return results;
+}
+
+export async function addEntrustedNote(db, { id, caseId, caseLabel, body }) {
+  await db.prepare(
+    "INSERT INTO entrusted_notes (id, case_id, case_label, body) VALUES (?, ?, ?, ?)",
+  ).bind(id, caseId, caseLabel, body).run();
+}
+
+// Entrusted access grants — the single universal passphrase per grant,
+// scoped to specific cases, revocable.
+export async function listGrants(db) {
+  const { results } = await db.prepare(
+    "SELECT id, label, case_ids_json, created_at, revoked_at FROM access_grants ORDER BY created_at DESC",
+  ).all();
+  return results;
+}
+
+export async function getGrant(db, id) {
+  return db.prepare("SELECT * FROM access_grants WHERE id = ?").bind(id).first();
+}
+
+export async function createGrant(db, { id, codeHash, caseIds, label }) {
+  await db.prepare(
+    "INSERT INTO access_grants (id, code_hash, case_ids_json, label) VALUES (?, ?, ?, ?)",
+  ).bind(id, codeHash, JSON.stringify(caseIds), label || null).run();
+}
+
+export async function revokeGrant(db, id) {
+  await db.prepare(
+    "UPDATE access_grants SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND revoked_at IS NULL",
+  ).bind(id).run();
+}
+
+export async function updateGrantPassphrase(db, id, newCodeHash) {
+  await db.prepare("UPDATE access_grants SET code_hash = ? WHERE id = ?").bind(newCodeHash, id).run();
+}

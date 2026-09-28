@@ -11,11 +11,18 @@
 #                        Cloudflare Access (guests have no Access identity). See
 #                        that file's own header for why it's a structurally
 #                        separate module, not a filtered view of the working side.
+#   - /bench/api/*       Bench Notes' machine API (src/bench-api.js) — the
+#                        publishing desk's write surface (a server, not a
+#                        browser, so it can't complete an Access login; gated
+#                        by its own bearer secret, BENCH_API_KEY, instead).
 #
-# Bench Notes' working side used to live here too (darius.life/bench/*) but
-# moved on 2026-09-28 to its own Worker on confidential.darius.life
+# Bench Notes' working-side HTML UI used to live here too (darius.life/bench/*)
+# but moved on 2026-09-28 to its own Worker on confidential.darius.life
 # (../confidential/), to reuse that hostname's pre-existing Cloudflare Access
-# application instead of adding a third covered path to this one.
+# application instead of adding a third covered path to this one. The machine
+# API above reuses the same D1 data that Worker's UI reads and writes
+# (workers/shared/bench-data.js) — it just isn't itself behind that Access
+# application, for the reason given above.
 name = "darius-life-private-legal"
 main = "src/index.js"
 compatibility_date = "2026-09-27"
@@ -30,6 +37,10 @@ zone_name = "darius.life"
 
 [[routes]]
 pattern = "darius.life/bench-entrusted/*"
+zone_name = "darius.life"
+
+[[routes]]
+pattern = "darius.life/bench/api/*"
 zone_name = "darius.life"
 
 [[r2_buckets]]
@@ -64,3 +75,8 @@ GITHUB_BRANCH = "main"
 # `wrangler secret put GH_COMMIT_TOKEN` or via deploy.yml's wrangler-action
 # `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).
 # A fine-grained GitHub PAT scoped to only this repo, Contents: Read and write.
+# BENCH_API_KEY is a secret, not a var. The bearer token bench-api.js checks
+# on every request — anyone holding it can write to the entire Bench Notes
+# database, so treat it like a password. Set directly via the Cloudflare API/
+# wrangler (not deploy.yml — it isn't a GitHub secret, since only the
+# publishing desk's backend needs to hold it, not this repo's CI).
