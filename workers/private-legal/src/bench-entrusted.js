@@ -63,11 +63,19 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
   );
 }
 
+// storage_kind "upload" documents are served from this Worker's own R2
+// binding (PRIVATE_LEGAL — the same bucket the working side uses, under
+// workers/shared/bench-data.js's documentObjectKey), never from
+// storage_ref directly, which for an upload is an internal R2 key, not a URL.
+function documentGuestHref(d) {
+  return `${PREFIX}documents/${d.id}/file`;
+}
+
 function renderPortal(documents, notes, entries) {
   return benchPage(
     "Bench Notes — Entrusted access",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access</span></h1></header>
-${renderEntrustedView(documents, notes, entries)}
+${renderEntrustedView(documents, notes, entries, { documentHref: documentGuestHref })}
 <div class="ticker"></div>
 <form method="post" action="${PREFIX}logout"><button type="submit">Sign out</button></form>`,
   );
@@ -75,8 +83,39 @@ ${renderEntrustedView(documents, notes, entries)}
 
 // --- Routing ---
 
+// Independently re-derives the exact same shared/scoped document list
+// listSharedDocuments already gives the rest of this page, rather than a
+// second, hand-written query — the file route gets the identical
+// confidentiality guarantee, not a parallel one that could drift from it.
+async function findServableDocument(env, session, docId) {
+  const grant = await getGrant(env, session.gid);
+  if (!grant || grant.revoked_at) return null;
+  const caseIds = JSON.parse(grant.case_ids_json || "[]");
+  const documents = await listSharedDocuments(env.BENCH_NOTES, caseIds);
+  return documents.find((d) => d.id === docId) || null;
+}
+
 export async function handleBenchEntrustedGet(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
+
+  const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
+  if (fileMatch) {
+    const token = readCookie(request, COOKIE_NAME);
+    const session = await verifySession(token, env.ENTRUSTED_COOKIE_SECRET);
+    if (!session) return notFound();
+    const doc = await findServableDocument(env, session, fileMatch[1]);
+    if (!doc || doc.storage_kind !== "upload") return notFound();
+    const object = await env.PRIVATE_LEGAL.get(doc.storage_ref);
+    if (!object) return notFound();
+    return new Response(object.body, {
+      headers: {
+        "content-type": object.httpMetadata?.contentType || "application/octet-stream",
+        "content-disposition": `inline; filename="${doc.title.replace(/"/g, "")}"`,
+        "cache-control": "private, no-store",
+      },
+    });
+  }
+
   if (path !== "") return notFound();
 
   const token = readCookie(request, COOKIE_NAME);

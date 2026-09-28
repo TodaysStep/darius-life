@@ -26,6 +26,14 @@ binding = "BENCH_NOTES"
 database_name = "darius-life-bench-notes"
 database_id = "42490728-b48c-4332-ad61-559ebf589935"
 
+# Same bucket the private-legal Worker already binds as PRIVATE_LEGAL — one
+# bucket, two Workers, each serving the documents its own side is allowed to
+# see (see workers/shared/bench-data.js's documentObjectKey and each
+# Worker's own /documents/:id/file route).
+[[r2_buckets]]
+binding = "BENCH_DOCUMENTS"
+bucket_name = "darius-life-private"
+
 [vars]
 ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
 ACCESS_AUD = "64ae3dd22643411542618705ef6b6d3dd0b034bf3f990ece171ed006bbdb388c"

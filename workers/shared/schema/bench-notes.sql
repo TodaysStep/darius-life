@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS documents (
                                                       -- generally. Null is a normal, general case
                                                       -- document, not an error.
   title         TEXT NOT NULL,
+  -- 'link': storage_ref is an external address Darius pasted in, validated as
+  -- http(s) at write time (bench-data.js). 'upload': storage_ref is an
+  -- internal R2 object key, never a URL — each side (working, entrusted)
+  -- builds its own serving address from the document's id, because the two
+  -- sides serve the same bytes through different, differently-gated routes.
+  storage_kind  TEXT NOT NULL DEFAULT 'link',
   storage_ref   TEXT NOT NULL,
   filed_date    TEXT,
   shared_at     TEXT,                 -- null until Darius manually shares it — never automatic

@@ -112,11 +112,21 @@ export function isPublishableStorageRef(ref) {
   }
 }
 
-export async function addDocument(db, { id, caseId, caseLabel, entryId, title, storageRef, filedDate }) {
-  if (!isPublishableStorageRef(storageRef)) throw new Error("storageRef must be an http(s) address.");
+// A directly uploaded file's storage_ref is a server-generated R2 key
+// (documentObjectKey below), never attacker- or founder-influenced text, so
+// the http(s) check — which exists for pasted-in links — doesn't apply to it.
+export async function addDocument(db, { id, caseId, caseLabel, entryId, title, storageRef, storageKind = "link", filedDate }) {
+  if (storageKind === "link" && !isPublishableStorageRef(storageRef)) throw new Error("storageRef must be an http(s) address.");
   await db.prepare(
-    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).bind(id, caseId, caseLabel, entryId || null, title, storageRef, filedDate || null).run();
+    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_kind, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, caseId, caseLabel, entryId || null, title, storageKind, storageRef, filedDate || null).run();
+}
+
+// The one place the R2 key for an uploaded document is shaped, so the
+// working-side upload handler and any future caller agree on it.
+export function documentObjectKey(documentId, filename) {
+  const safeName = (filename || "file").replace(/[^A-Za-z0-9._-]/g, "_").slice(-100);
+  return `bench-documents/${documentId}/${safeName}`;
 }
 
 export async function setDocumentShared(db, id, shared) {

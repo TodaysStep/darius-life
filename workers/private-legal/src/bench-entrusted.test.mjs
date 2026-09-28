@@ -2,13 +2,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
 import { createFakeD1 } from "../../shared/test-fake-d1.mjs";
+import { createFakeR2 } from "../../shared/test-fake-r2.mjs";
 import { sha256Hex } from "../../shared/bench-crypto.js";
 
 const SECRET = "test-entrusted-secret";
 
 function setup() {
   const fakeD1 = createFakeD1();
-  return { env: { ENTRUSTED_COOKIE_SECRET: SECRET, BENCH_NOTES: fakeD1.BENCH_NOTES }, fakeD1 };
+  const fakeR2 = createFakeR2();
+  return { env: { ENTRUSTED_COOKIE_SECRET: SECRET, BENCH_NOTES: fakeD1.BENCH_NOTES, PRIVATE_LEGAL: fakeR2 }, fakeD1, fakeR2 };
+}
+
+async function loginAndGetCookie(env, passphrase) {
+  const form = new URLSearchParams({ passphrase });
+  const res = await handleBenchEntrustedPost(
+    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench-entrusted/login"),
+  );
+  return extractSetCookie(res);
 }
 
 const cookieReq = (url, cookie) => new Request(url, cookie ? { headers: { Cookie: cookie } } : undefined);
@@ -112,6 +123,36 @@ test("logout clears the cookie", async () => {
   const res = await handleBenchEntrustedPost(new Request("https://darius.life/bench-entrusted/logout", { method: "POST" }), env, new URL("https://darius.life/bench-entrusted/logout"));
   assert.equal(res.status, 303);
   assert.match(res.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("an uploaded, shared, in-scope document's bytes are servable to a real guest session", async () => {
+  const { env, fakeD1, fakeR2 } = setup();
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: await sha256Hex("right-code"), case_ids_json: JSON.stringify(["case-1"]), label: null, created_at: "t", revoked_at: null });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "motion.pdf", storage_kind: "upload", storage_ref: "bench-documents/doc-1/motion.pdf", shared_at: "t", created_at: "t" });
+  await fakeR2.put("bench-documents/doc-1/motion.pdf", "the actual bytes", { httpMetadata: { contentType: "application/pdf" } });
+
+  const cookie = await loginAndGetCookie(env, "right-code");
+  const res = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/doc-1/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/doc-1/file"));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/pdf");
+  assert.equal(Buffer.from(await res.arrayBuffer()).toString(), "the actual bytes");
+});
+
+test("an uploaded document's file route is a 404 when unshared, out of the grant's scope, or with no session at all", async () => {
+  const { env, fakeD1, fakeR2 } = setup();
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: await sha256Hex("right-code"), case_ids_json: JSON.stringify(["case-1"]), label: null, created_at: "t", revoked_at: null });
+  fakeD1.tables.documents.push({ id: "unshared-doc", case_id: "case-1", case_label: "X", title: "d", storage_kind: "upload", storage_ref: "k1", shared_at: null, created_at: "t" });
+  fakeD1.tables.documents.push({ id: "out-of-scope-doc", case_id: "case-2", case_label: "Y", title: "d", storage_kind: "upload", storage_ref: "k2", shared_at: "t", created_at: "t" });
+  await fakeR2.put("k1", "secret-1");
+  await fakeR2.put("k2", "secret-2");
+
+  const cookie = await loginAndGetCookie(env, "right-code");
+  const noSessionRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/unshared-doc/file"), env, new URL("https://darius.life/bench-entrusted/documents/unshared-doc/file"));
+  assert.equal(noSessionRes.status, 404);
+  const unsharedRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/unshared-doc/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/unshared-doc/file"));
+  assert.equal(unsharedRes.status, 404);
+  const outOfScopeRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/out-of-scope-doc/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/out-of-scope-doc/file"));
+  assert.equal(outOfScopeRes.status, 404);
 });
 
 test("a real guest session shows a shared entry's fact but never its private layers", async () => {

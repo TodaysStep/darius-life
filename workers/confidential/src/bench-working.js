@@ -22,6 +22,7 @@ import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
 export const PREFIX = "/bench/";
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const forbidden = () => new Response("Forbidden", { status: 403, headers: headers("text/plain; charset=utf-8") });
 const notFound = () => new Response("Not Found", { status: 404, headers: headers("text/plain; charset=utf-8") });
@@ -83,17 +84,39 @@ ${g.revoked_at ? "" : `<form method="post" action="${PREFIX}grants/${escapeHtml(
 function renderCaseList(cases, grants, grantSummaries) {
   const rows = cases.length
     ? cases.map((c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`).join("\n")
-    : `<p class="hint">No cases yet — add one below.</p>`;
+    : `<p class="hint">No cases yet — upload a document below, or add one the long way further down.</p>`;
   const grantRows = grants.length ? grants.map((g) => renderGrantRow(g, grantSummaries.get(g.id))).join("\n") : `<p class="hint">No entrusted access granted yet.</p>`;
   const caseCheckboxes = cases.map((c) => `<label class="opt"><input type="checkbox" name="caseIds" value="${escapeHtml(c.id)}"> ${escapeHtml(c.title)}</label>`).join("\n");
+  const caseOptions = cases.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)}</option>`).join("\n");
 
   return benchPage(
     "Bench Notes",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Working docket — private</span></h1></header>
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
-${rows}
+
+<h2>Upload a document</h2>
+<p class="hint">The default way to start a bench note: bring a document in, say what it is, and add your own notes about it. No case number needed to start.</p>
+<form method="post" action="${PREFIX}upload" enctype="multipart/form-data">
+<label for="uploadFile">Document</label>
+<input type="file" id="uploadFile" name="file" required>
+<label for="uploadCaseId">Case</label>
+<select id="uploadCaseId" name="caseId">
+<option value="">Start a new case</option>
+${caseOptions}
+</select>
+<label for="uploadNewCaseTitle">New case title (only used if you picked "Start a new case")</label>
+<input type="text" id="uploadNewCaseTitle" name="newCaseTitle">
+<label for="uploadFact">What is this document?</label>
+<textarea id="uploadFact" name="fact" required></textarea>
+<label for="uploadCommentary">Your notes about it (optional — private, never shared)</label>
+<textarea id="uploadCommentary" name="commentary"></textarea>
+<button type="submit">Upload</button>
+</form>
 <div class="ticker"></div>
-<h2>Add a case</h2>
+${rows}
+
+<h2>Add a case the long way</h2>
+<p class="hint">For when you want court and case-number details on record before there's a document to attach — never required to get started.</p>
 <form method="post" action="${PREFIX}">
 <label for="title">Case title</label>
 <input type="text" id="title" name="title" required>
@@ -142,10 +165,14 @@ function renderPattern(p) {
   return `<div class="card"><strong>${escapeHtml(p.subject_name)}</strong> <span class="hint">(${escapeHtml(p.subject_type)})</span><div>${escapeHtml(p.description)}</div></div>`;
 }
 
+function documentOwnerHref(d) {
+  return d.storage_kind === "upload" ? `${PREFIX}documents/${d.id}/file` : d.storage_ref;
+}
+
 function renderDocumentRow(base, d) {
   const shared = Boolean(d.shared_at);
   const toggleAction = `${base}/documents/${escapeHtml(d.id)}/${shared ? "unshare" : "share"}`;
-  return `<div class="case-row"><span>${escapeHtml(d.title)}${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""}</span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>`;
+  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""}</span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>`;
 }
 
 function renderNoteRow(n) {
@@ -290,7 +317,7 @@ export async function handleBenchGet(request, env, url) {
       return html(
         benchPage(
           "Preview — Bench Notes",
-          `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access (preview)</span></h1></header>${renderEntrustedView(documents, notes, entries, { previewBanner: banner })}`,
+          `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access (preview)</span></h1></header>${renderEntrustedView(documents, notes, entries, { previewBanner: banner, documentHref: documentOwnerHref })}`,
         ),
       );
     }
@@ -307,6 +334,21 @@ export async function handleBenchGet(request, env, url) {
         listEntrustedNotes(env, caseRow.id),
       ]);
       return html(renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes));
+    }
+
+    const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
+    if (fileMatch) {
+      const doc = await data.getDocument(env.BENCH_NOTES, fileMatch[1]);
+      if (!doc || doc.storage_kind !== "upload") return notFound();
+      const object = await env.BENCH_DOCUMENTS.get(doc.storage_ref);
+      if (!object) return notFound();
+      return new Response(object.body, {
+        headers: {
+          "content-type": object.httpMetadata?.contentType || "application/octet-stream",
+          "content-disposition": `inline; filename="${doc.title.replace(/"/g, "")}"`,
+          "cache-control": "private, no-store",
+        },
+      });
     }
     return notFound();
   } catch (e) {
@@ -328,6 +370,44 @@ export async function handleBenchPost(request, env, url) {
       const id = crypto.randomUUID();
       await createCase(env, { id, title, court: form.get("court"), caseNumber: form.get("caseNumber") });
       return Response.redirect(`https://darius.life${PREFIX}case/${id}`, 303);
+    }
+
+    if (path === "upload") {
+      const file = form.get("file");
+      if (!file || typeof file === "string" || !file.size) return html(errorPage("Choose a document to upload."), 400);
+      if (file.size > MAX_UPLOAD_BYTES) return html(errorPage("Files up to 25 MB are accepted."), 413);
+      const fact = form.get("fact");
+      if (!fact) return html(errorPage("Say what this document is — that's never inferred for you."), 400);
+
+      let caseId = form.get("caseId");
+      let caseRow;
+      if (caseId) {
+        caseRow = await getCase(env, caseId);
+        if (!caseRow) return notFound();
+      } else {
+        const newCaseTitle = form.get("newCaseTitle");
+        if (!newCaseTitle) return html(errorPage("Name the new case, or pick an existing one."), 400);
+        caseId = crypto.randomUUID();
+        caseRow = { id: caseId, title: newCaseTitle };
+        await createCase(env, { id: caseId, title: newCaseTitle, court: null, caseNumber: null });
+      }
+
+      const entryId = crypto.randomUUID();
+      await addEntry(env, {
+        id: entryId,
+        caseId,
+        caseLabel: caseRow.title,
+        entryDate: new Date().toISOString().slice(0, 10),
+        fact,
+        commentary: form.get("commentary"),
+      });
+
+      const docId = crypto.randomUUID();
+      const key = data.documentObjectKey(docId, file.name);
+      await env.BENCH_DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" } });
+      await addDocument(env, { id: docId, caseId, caseLabel: caseRow.title, entryId, title: file.name, storageKind: "upload", storageRef: key });
+
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
     const entriesMatch = path.match(/^case\/([^/]+)\/entries$/);

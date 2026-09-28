@@ -48,15 +48,27 @@ function groupByCaseLabel(rows) {
   return groups;
 }
 
-function renderDocLink(d) {
-  return `<div class="case-row"><a href="${escapeHtml(d.storage_ref)}">${escapeHtml(d.title)}</a>${d.filed_date ? `<span class="status">${escapeHtml(d.filed_date)}</span>` : ""}</div>`;
+// storage_kind "upload" means storage_ref is an internal R2 key, never a
+// URL — the caller's own documentHref builds the actual serving address for
+// its own side (the working side's Access-gated route, or the entrusted
+// side's grant-checked one). storage_kind "link" (the original, and still
+// the default for anything written before uploads existed) means storage_ref
+// already is the address, validated at write time (bench-data.js).
+function renderDocLink(d, documentHref) {
+  const href = d.storage_kind === "upload" ? documentHref(d) : d.storage_ref;
+  return `<div class="case-row"><a href="${escapeHtml(href)}">${escapeHtml(d.title)}</a>${d.filed_date ? `<span class="status">${escapeHtml(d.filed_date)}</span>` : ""}</div>`;
 }
 
-function renderEntry(entry, attachedDocs) {
+// entry rows reaching this function come only from listSharedEntries's own
+// narrow query (id/case_id/case_label/entry_date/fact) — there is no
+// commentary/recommended_direction/court_takeaways field to accidentally
+// render here even if a caller's row shape changed, because this function
+// never references those keys.
+function renderEntry(entry, attachedDocs, documentHref) {
   return `<div class="card">
 <span class="entry-date">${escapeHtml(entry.entry_date)}</span>
 <div class="entry-layer">${escapeHtml(entry.fact)}</div>
-${attachedDocs.length ? attachedDocs.map(renderDocLink).join("\n") : ""}
+${attachedDocs.length ? attachedDocs.map((d) => renderDocLink(d, documentHref)).join("\n") : ""}
 </div>`;
 }
 
@@ -70,8 +82,12 @@ export function groupsFor(documents, notes, entries) {
 
 // Pure render — no D1 access here at all. `previewBanner`, if given, is
 // already-escaped HTML injected at the top (used only by the working side's
-// preview; a real entrusted session never sets it).
-export function renderEntrustedView(documents, notes, entries, { previewBanner = "" } = {}) {
+// preview; a real entrusted session never sets it). `documentHref(d)`
+// builds the actual serving address for an uploaded file (storage_kind
+// "upload"); each caller supplies its own, because the working side and the
+// entrusted side serve the same bytes from different, differently-gated
+// routes. Defaults to the raw (pre-upload-support) behavior.
+export function renderEntrustedView(documents, notes, entries, { previewBanner = "", documentHref = (d) => d.storage_ref } = {}) {
   const { docGroups, noteGroups, entryGroups, caseLabels } = groupsFor(documents, notes, entries);
 
   const sections = caseLabels.length
@@ -89,10 +105,10 @@ export function renderEntrustedView(documents, notes, entries, { previewBanner =
           }
 
           const timeline = theseEntries.length
-            ? `<div class="spine">${theseEntries.map((e) => renderEntry(e, docsByEntry.get(e.id) || [])).join("\n")}</div>`
+            ? `<div class="spine">${theseEntries.map((e) => renderEntry(e, docsByEntry.get(e.id) || [], documentHref)).join("\n")}</div>`
             : `<p class="hint">No timeline entries shared yet.</p>`;
           const docRows = generalDocs.length
-            ? generalDocs.map(renderDocLink).join("\n")
+            ? generalDocs.map((d) => renderDocLink(d, documentHref)).join("\n")
             : `<p class="hint">No general documents shared yet.</p>`;
           const noteRows = theseNotes.map((n) => `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`).join("\n");
 

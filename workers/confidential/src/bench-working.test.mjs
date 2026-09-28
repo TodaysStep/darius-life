@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { handleBenchGet, handleBenchPost } from "./bench-working.js";
 import { resetCertsCacheForTests } from "../../shared/access.js";
 import { createFakeD1 } from "../../shared/test-fake-d1.mjs";
+import { createFakeR2 } from "../../shared/test-fake-r2.mjs";
 
 beforeEach(() => resetCertsCacheForTests());
 
@@ -37,11 +38,12 @@ async function validToken() {
 
 function setup(jwk) {
   const fakeD1 = createFakeD1();
+  const fakeR2 = createFakeR2();
   globalThis.fetch = async (url) => {
     if (String(url) === `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`) return { ok: true, json: async () => ({ keys: [jwk] }) };
     throw new Error(`unexpected fetch: ${url}`);
   };
-  return { env: { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES }, fakeD1 };
+  return { env: { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2 }, fakeD1, fakeR2 };
 }
 
 const authedRequest = (url, token, opts = {}) =>
@@ -106,6 +108,90 @@ test("adding a document with a javascript: storageRef is rejected and writes not
   const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents"));
   assert.equal(res.status, 400);
   assert.equal(fakeD1.tables.documents.length, 0);
+});
+
+test("uploading a document is the default creation path: new case, a docket entry, and the file land together", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+
+  const form = new FormData();
+  form.append("file", new File(["hello world"], "motion.pdf", { type: "application/pdf" }));
+  form.append("newCaseTitle", "Family matter");
+  form.append("fact", "Received a filing from opposing counsel.");
+  form.append("commentary", "Looks routine.");
+
+  const req = authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/upload"));
+  assert.equal(res.status, 303);
+
+  assert.equal(fakeD1.tables.cases.length, 1);
+  assert.equal(fakeD1.tables.cases[0].title, "Family matter");
+  assert.equal(fakeD1.tables.cases[0].case_number, null);
+  assert.equal(fakeD1.tables.docket_entries.length, 1);
+  assert.equal(fakeD1.tables.docket_entries[0].fact, "Received a filing from opposing counsel.");
+  assert.equal(fakeD1.tables.docket_entries[0].commentary, "Looks routine.");
+
+  assert.equal(fakeD1.tables.documents.length, 1);
+  const doc = fakeD1.tables.documents[0];
+  assert.equal(doc.storage_kind, "upload");
+  assert.equal(doc.entry_id, fakeD1.tables.docket_entries[0].id);
+  assert.equal(fakeR2.objects.size, 1);
+  assert.equal(fakeR2.objects.get(doc.storage_ref).bytes.toString(), "hello world");
+});
+
+test("uploading to an existing case does not create a second case", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+
+  const form = new FormData();
+  form.append("file", new File(["contents"], "notice.pdf", { type: "application/pdf" }));
+  form.append("caseId", "case-1");
+  form.append("fact", "Notice of hearing.");
+
+  const req = authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/upload"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.cases.length, 1);
+  assert.equal(fakeD1.tables.documents[0].case_id, "case-1");
+});
+
+test("an upload without a file, or without saying what it is, is rejected and writes nothing", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+
+  const noFact = new FormData();
+  noFact.append("file", new File(["x"], "a.pdf"));
+  noFact.append("newCaseTitle", "New case");
+  const res1 = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFact }), env, new URL("https://darius.life/bench/upload"));
+  assert.equal(res1.status, 400);
+
+  const noFile = new FormData();
+  noFile.append("newCaseTitle", "New case");
+  noFile.append("fact", "Something");
+  const res2 = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFile }), env, new URL("https://darius.life/bench/upload"));
+  assert.equal(res2.status, 400);
+
+  assert.equal(fakeD1.tables.cases.length, 0);
+  assert.equal(fakeD1.tables.documents.length, 0);
+});
+
+test("GET the uploaded file's own route streams the bytes back with a token, and 404s for a link-only document", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeR2 } = setup(jwk);
+  await fakeR2.put("bench-documents/doc-1/motion.pdf", "the actual bytes", { httpMetadata: { contentType: "application/pdf" } });
+  const fakeD1 = createFakeD1();
+  env.BENCH_NOTES = fakeD1.BENCH_NOTES;
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "motion.pdf", storage_kind: "upload", storage_ref: "bench-documents/doc-1/motion.pdf", shared_at: null, created_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Link", storage_kind: "link", storage_ref: "https://example.com/doc", shared_at: null, created_at: "t" });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-1/file", token), env, new URL("https://darius.life/bench/documents/doc-1/file"));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/pdf");
+  assert.equal(Buffer.from(await res.arrayBuffer()).toString(), "the actual bytes");
+
+  const linkRes = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-2/file", token), env, new URL("https://darius.life/bench/documents/doc-2/file"));
+  assert.equal(linkRes.status, 404);
 });
 
 test("a docket entry without a fact is rejected and writes nothing", async () => {

@@ -72,8 +72,24 @@ Darius's own docket:
   it specifically.
 - A **glossary** and **pattern-spotting** on judge/opposing-counsel behavior.
 - **Documents**, either attached to one timeline entry or general to the
-  case. `storage_ref` just points at wherever the file actually lives (the
-  Lovable document viewer, R2, a link) — this table never stores the file.
+  case, in one of two forms: a **link** Darius pastes in (`storage_ref` is
+  that address, validated as http(s) at write time so a pasted
+  `javascript:` reference can never reach the entrusted page's `<a href>`),
+  or an actual **upload** (`storage_kind = 'upload'`; `storage_ref` is then
+  an internal R2 key, never a URL — each side serves the same bytes through
+  its own route: `/bench/documents/:id/file` here, Access-gated;
+  `/bench-entrusted/documents/:id/file` on the entrusted side, re-deriving
+  the exact same shared/case-scoped list `listSharedDocuments` already
+  enforces, not a second query that could drift from it). Both bind the
+  same R2 bucket the private legal area already used
+  (`darius-life-private`), under a `bench-documents/` prefix.
+  **Uploading a document is the default way to start a bench note** — the
+  case list's first form: pick a file, say what it is (required — never
+  inferred), optionally add your own notes (private, never shared), and
+  either name a brand-new case or attach to an existing one. No case
+  number, no court, nothing else required to get started; the longer
+  "add a case" form with those fields is still there, further down, for
+  when you want them on record before there's a document to attach.
 - An **entrusted-access management area** on the case list page: every
   guest's passphrase grant, which cases they're scoped to, how many
   documents and timeline entries are actually shared with them (computed
@@ -117,6 +133,19 @@ structure as the working side, limited to whatever's been explicitly shared:
 See `workers/shared/schema/bench-notes.sql` for the full data model and its
 confidentiality notes, and `workers/shared/bench-entrusted-view.js`'s own
 header for exactly how the boundary is enforced.
+
+**"Shareable, but requiring a login"** — Bench Notes already worked this way
+before this pass, and still does: nothing on the entrusted side is a bare
+link. Every guest, whether reading shared notes or now opening an uploaded
+document's own file route, must have signed in with a passphrase first —
+that passphrase login *is* the gate, the same one this section describes
+above. This pass read "requiring a login" as confirming that model, not
+asking for a second, separate account system (usernames, passwords,
+password resets) alongside it — Bench Notes has no such system, and adding
+one wasn't requested elsewhere in this repo's history. If a real per-guest
+account system was actually intended instead of the existing per-grant
+passphrase, that's a materially different, larger build and needs saying
+explicitly.
 
 **How the working side's Access application was found, for the record
 (2026-09-28):** an earlier pass concluded no Cloudflare Access application
