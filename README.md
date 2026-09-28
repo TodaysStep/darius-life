@@ -138,13 +138,31 @@ or remove it (needs the zone-level **DNS → Edit** permission added).
 different Access application, whose real values are still unconfirmed — see
 `workers/private-legal/wrangler.toml`.
 
-**Publishing from ChatGPT — investigated, not built.** The idea was to wire
-Bench Notes into an existing ChatGPT-reachable "publishing desk," reusing its
-auth and source of truth. No such thing exists: the one real ChatGPT-facing
-system found (an MCP server inside the separate Posterity Cloud platform) is
-read-only, PAT-authenticated, unsubmitted to OpenAI, and that platform's own
-governing rule is that AI is never the publisher. Bench Notes' own case/
-timeline/document forms above are, for now, the only way content gets in.
+**Publishing from ChatGPT — investigated in full, deliberately not built.**
+An earlier pass here concluded no real ChatGPT-facing publishing system
+existed at all. That was wrong, and was corrected by reading the actual
+`posteritycloud-infra` source directly rather than its surrounding docs: a
+real, live "Publishing Desk" exists — `supabase/functions/_shared/publishing-desk/`
+(`ops.ts`/`mcp-tools.ts`), shared by a web editor and a ChatGPT connector
+named "PosterityOS Operations" over MCP with its own OAuth authorization
+server. It is documented in full at `docs/publishing-desk/CURRENT-STATE.md`
+and `docs/publishing-desk/OPEN-STANDARD.md` in that repo.
+
+It was not used for Bench Notes, on purpose. That desk's whole model is
+*publish one immutable edition, to one public destination, by exact
+approval* — it has no concept of a guest, a passphrase, or "show this to one
+person and no one else." Retrofitting Bench Notes' guest-grant/share model
+into it would either weaken guarantees it already relies on for real,
+currently-live Founder's Notes and press-release publishing, or force it to
+grow a second access-control system next to the one it has. Bench Notes'
+own machine API (`workers/private-legal/src/bench-api.js`, below) is the
+right seam instead — but it was built as a broad, single-bearer-token
+administrative surface, appropriate for a trusted server, not yet appropriate
+to hand to an AI agent that can retry, get injected text as data, or be
+asked to summarize what it just read. Connecting it to ChatGPT is on hold
+until it has real per-operation scoping, idempotent writes, and an audit
+trail — none of which exist yet. Bench Notes' own case/timeline/document
+forms above remain, for now, the only way content gets in.
 
 ## Status and project lights
 

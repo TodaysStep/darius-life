@@ -121,6 +121,7 @@ export async function handleBenchApi(request, env, url) {
       const caseRow = await data.getCase(db, documentsMatch[1]);
       if (!caseRow) return notFound();
       if (!body.title || !body.storageRef) return badRequest("title and storageRef are required.");
+      if (!data.isPublishableStorageRef(body.storageRef)) return badRequest("storageRef must be an http(s) address.");
       const id = crypto.randomUUID();
       await data.addDocument(db, {
         id, caseId: caseRow.id, caseLabel: caseRow.title, entryId: body.entryId,
@@ -174,7 +175,11 @@ export async function handleBenchApi(request, env, url) {
 
     return notFound();
   } catch (e) {
-    return json({ error: "internal_error", message: e.message }, 502);
+    // Never echo the raw exception back to the caller — a D1/SQLite error can
+    // name tables, columns or constraints. The full message still goes to
+    // Cloudflare's own Worker logs (console.error), just not to the response.
+    console.error("bench-api internal error:", e);
+    return json({ error: "internal_error" }, 500);
   }
 }
 

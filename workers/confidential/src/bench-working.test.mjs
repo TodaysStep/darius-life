@@ -96,6 +96,18 @@ test("adding a docket entry stores all four layers and shows them on the case pa
   assert.match(html, /Continuance granted\./);
 });
 
+test("adding a document with a javascript: storageRef is rejected and writes nothing", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ docTitle: "Motion", storageRef: "javascript:alert(1)" });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents"));
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.documents.length, 0);
+});
+
 test("a docket entry without a fact is rejected and writes nothing", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1 } = setup(jwk);

@@ -390,6 +390,7 @@ export async function handleBenchPost(request, env, url) {
       const title = form.get("docTitle");
       const storageRef = form.get("storageRef");
       if (!title || !storageRef) return html(errorPage("A document needs a title and where it lives."), 400);
+      if (!data.isPublishableStorageRef(storageRef)) return html(errorPage("Where it lives must be an http(s) address."), 400);
       await addDocument(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, entryId: form.get("entryId"), title, storageRef, filedDate: form.get("filedDate") });
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }

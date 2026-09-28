@@ -46,6 +46,26 @@ test("publishing a case, an entry, and a document lands directly in the D1 table
   assert.equal(fakeD1.tables.documents[0].entry_id, entryId);
 });
 
+test("a document whose storageRef is not an http(s) address is refused, not stored", async () => {
+  const { env, fakeD1 } = setup();
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", status: "open" });
+  const res = await call(env, "cases/case-1/documents", { method: "POST", body: { title: "Motion", storageRef: "javascript:alert(1)" } });
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.documents.length, 0);
+});
+
+test("an internal error never echoes the raw exception message back to the caller", async () => {
+  const { env, fakeD1 } = setup();
+  // Force ops.ts-style breakage: a case row missing the column addEntry needs.
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter" });
+  const brokenDb = { ...env.BENCH_NOTES, prepare: () => { throw new Error("no such column: case_label_typo"); } };
+  const res = await handleBenchApi(apiRequest("cases/case-1/entries", { method: "POST", body: { entryDate: "2026-09-28", fact: "F" } }), { ...env, BENCH_NOTES: brokenDb }, new URL("https://darius.life/bench/api/cases/case-1/entries"));
+  assert.equal(res.status, 500);
+  const body = await res.json();
+  assert.equal(body.error, "internal_error");
+  assert.ok(!JSON.stringify(body).includes("case_label_typo"));
+});
+
 test("sharing an entry through the API sets shared_at, same as the human toggle would", async () => {
   const { env, fakeD1 } = setup();
   fakeD1.tables.docket_entries.push({ id: "entry-1", case_id: "case-1", case_label: "X", entry_date: "2026-09-28", fact: "F", shared_at: null, source: "manual" });

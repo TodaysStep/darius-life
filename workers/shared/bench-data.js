@@ -98,7 +98,22 @@ export async function getDocument(db, id) {
   return db.prepare("SELECT * FROM documents WHERE id = ?").bind(id).first();
 }
 
+// storage_ref ends up in an href on the entrusted/preview page
+// (bench-entrusted-view.js escapes the HTML but does not, and should not have
+// to, second-guess the URL scheme). A javascript:/data:/vbscript: reference
+// would still execute on click despite the escaping, so http(s)-only is
+// enforced once here, for every caller (the human form and the machine API
+// alike), rather than trusted at the edge.
+export function isPublishableStorageRef(ref) {
+  try {
+    return new URL(ref).protocol === "http:" || new URL(ref).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export async function addDocument(db, { id, caseId, caseLabel, entryId, title, storageRef, filedDate }) {
+  if (!isPublishableStorageRef(storageRef)) throw new Error("storageRef must be an http(s) address.");
   await db.prepare(
     "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).bind(id, caseId, caseLabel, entryId || null, title, storageRef, filedDate || null).run();
