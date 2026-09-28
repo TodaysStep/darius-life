@@ -110,6 +110,13 @@ export function createFakeD1() {
       return { results: rows, success: true };
     }
 
+    if ((m = sql.match(/^DELETE FROM (\w+)(?: WHERE (.+))?$/i))) {
+      const [, table, where] = m;
+      const before = tables[table].length;
+      tables[table] = tables[table].filter((row) => !evalWhere(where, row, [...args]));
+      return { results: [], success: true, meta: { changes: before - tables[table].length } };
+    }
+
     throw new Error(`fake-d1: unsupported statement: ${sql}`);
   }
 

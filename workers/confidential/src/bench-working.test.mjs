@@ -492,3 +492,92 @@ test("GET /bench/static/bench.js serves the client script, Access-gated like eve
   const body = await res.text();
   assert.match(body, /MediaRecorder/);
 });
+
+test("deleting an entry removes it and any document attached to it becomes general instead", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "entry-1", case_id: "case-1", case_label: "X", entry_date: "t", fact: "F", source: "manual", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", entry_id: "entry-1", title: "Motion", storage_kind: "link", storage_ref: "https://example.com/x", shared_at: null, created_at: "t" });
+
+  const req = authedRequest("https://darius.life/bench/case/case-1/entries/entry-1/delete", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/entries/entry-1/delete"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.docket_entries.length, 0);
+  assert.equal(fakeD1.tables.documents[0].entry_id, null);
+});
+
+test("deleting a document also deletes its R2 bytes and its recordings' audio", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "bench-blobs/doc-1/motion.pdf", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", created_at: "t" });
+  await fakeR2.put("bench-blobs/doc-1/motion.pdf", "doc bytes");
+  await fakeR2.put("bench-blobs/r1/voice.m4a", "audio bytes");
+
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/delete", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/delete"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.documents.length, 0);
+  assert.equal(fakeD1.tables.document_recordings.length, 0);
+  assert.equal(await fakeR2.get("bench-blobs/doc-1/motion.pdf"), null);
+  assert.equal(await fakeR2.get("bench-blobs/r1/voice.m4a"), null);
+});
+
+test("deleting a single recording removes only that row and its own audio, leaving the document alone", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", created_at: "t" });
+  await fakeR2.put("bench-blobs/r1/voice.m4a", "audio bytes");
+
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/delete", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/delete"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.document_recordings.length, 0);
+  assert.equal(fakeD1.tables.documents.length, 1);
+  assert.equal(await fakeR2.get("bench-blobs/r1/voice.m4a"), null);
+});
+
+test("deleting a case requires typing its exact title back, and refuses (writing nothing) if it doesn't match", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+
+  const wrongForm = new URLSearchParams({ confirmTitle: "wrong title" });
+  const wrongRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/delete", token, { method: "POST", body: wrongForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/delete"),
+  );
+  assert.equal(wrongRes.status, 400);
+  assert.equal(fakeD1.tables.cases.length, 1);
+
+  const rightForm = new URLSearchParams({ confirmTitle: "Family matter" });
+  const rightRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/delete", token, { method: "POST", body: rightForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/delete"),
+  );
+  assert.equal(rightRes.status, 303);
+  assert.equal(fakeD1.tables.cases.length, 0);
+});
+
+test("deleting a case removes every document's R2 bytes and every recording's audio under it", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "bench-blobs/doc-1/motion.pdf", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", created_at: "t" });
+  await fakeR2.put("bench-blobs/doc-1/motion.pdf", "doc bytes");
+  await fakeR2.put("bench-blobs/r1/voice.m4a", "audio bytes");
+
+  const form = new URLSearchParams({ confirmTitle: "Family matter" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/delete", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/delete"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(await fakeR2.get("bench-blobs/doc-1/motion.pdf"), null);
+  assert.equal(await fakeR2.get("bench-blobs/r1/voice.m4a"), null);
+});

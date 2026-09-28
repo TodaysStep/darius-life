@@ -133,6 +133,16 @@ Darius's own docket:
   button captures audio via `MediaRecorder`, and on stop, uploads it
   exactly like a chosen file. Working-side only, like commentary — never
   shared, never entrusted-visible.
+- **Delete**, at every level, added because there was no way to remove a
+  mistake or a test entry at all before this pass: a docket entry (its own
+  documents become general instead of disappearing with it), a document
+  (and its own recordings — every R2 object either owned deleted along
+  with the row, best-effort, so a bucket hiccup never blocks the D1
+  delete and leaves an entry Darius can't get rid of), a single
+  note/recording, and a whole case. Deleting a case is the one place with
+  real friction: the case's own title must be typed back exactly before
+  anything happens, since it cascades — every entry, document, and
+  recording under it, permanently.
 - An **entrusted-access management area** on the case list page: every
   guest's passphrase grant, which cases they're scoped to, how many
   documents and timeline entries are actually shared with them (computed

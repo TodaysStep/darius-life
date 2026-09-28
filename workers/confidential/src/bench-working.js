@@ -81,6 +81,29 @@ const setDocumentShared = (env, id, shared) => data.setDocumentShared(env.BENCH_
 const listEntrustedNotes = (env, caseId) => data.listEntrustedNotes(env.BENCH_NOTES, caseId);
 const listDocumentRecordings = (env, documentId) => data.listDocumentRecordings(env.BENCH_NOTES, documentId);
 const addDocumentRecording = (env, fields) => data.addDocumentRecording(env.BENCH_NOTES, fields);
+const getDocumentRecording = (env, id) => data.getDocumentRecording(env.BENCH_NOTES, id);
+const deleteDocumentRecording = (env, id) => data.deleteDocumentRecording(env.BENCH_NOTES, id);
+const deleteEntry = (env, id) => data.deleteEntry(env.BENCH_NOTES, id);
+
+// Every R2 delete below is best-effort: if a key is already gone (or the
+// bucket call fails), the D1 rows still go — an orphaned R2 object costs
+// nothing and points at nothing; a docket entry Darius can't get rid of
+// because R2 hiccuped is the worse failure mode by far.
+async function deleteBlobRefs(env, refs) {
+  await Promise.all(refs.map((ref) => env.BENCH_DOCUMENTS.delete(ref).catch(() => {})));
+}
+
+async function deleteDocumentAndBlobs(env, docId) {
+  const refs = await data.listDocumentBlobRefs(env.BENCH_NOTES, docId);
+  await deleteBlobRefs(env, refs);
+  await data.deleteDocument(env.BENCH_NOTES, docId);
+}
+
+async function deleteCaseAndBlobs(env, caseId) {
+  const refs = await data.listCaseBlobRefs(env.BENCH_NOTES, caseId);
+  await deleteBlobRefs(env, refs);
+  await data.deleteCase(env.BENCH_NOTES, caseId);
+}
 const addEntrustedNote = (env, fields) => data.addEntrustedNote(env.BENCH_NOTES, fields);
 const listGrants = (env) => data.listGrants(env.BENCH_NOTES);
 const createGrant = (env, fields) => data.createGrant(env.BENCH_NOTES, fields);
@@ -210,6 +233,7 @@ ${attachedDocs.length ? attachedDocs.map((d) => renderDocumentRow(base, d)).join
 <button type="submit">Save changes</button>
 </form>
 </details>
+<form method="post" action="${base}/entries/${escapeHtml(e.id)}/delete"><button type="submit">Delete entry</button></form>
 </div>`;
 }
 
@@ -228,8 +252,9 @@ function documentOwnerHref(d) {
 function renderDocumentRow(base, d) {
   const shared = Boolean(d.shared_at);
   const toggleAction = `${base}/documents/${escapeHtml(d.id)}/${shared ? "unshare" : "share"}`;
+  const deleteAction = `${base}/documents/${escapeHtml(d.id)}/delete`;
   const detailHref = `${PREFIX}documents/${escapeHtml(d.id)}`;
-  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""} · <a href="${detailHref}">notes &amp; recordings</a></span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>`;
+  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""} · <a href="${detailHref}">notes &amp; recordings</a></span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form> · <form style="display:inline" method="post" action="${deleteAction}"><button type="submit">Delete</button></form></span></div>`;
 }
 
 function renderNoteRow(n) {
@@ -241,11 +266,13 @@ function formatDuration(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function renderRecordingRow(r) {
+function renderRecordingRow(base, r) {
   const audio = r.audio_storage_ref
     ? `<audio controls src="${PREFIX}recordings/${escapeHtml(r.id)}/file" style="width:100%;margin-top:0.5em"></audio>${r.audio_duration_seconds ? `<span class="hint">${formatDuration(r.audio_duration_seconds)}</span>` : ""}`
     : "";
-  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}</div>`;
+  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}
+<form method="post" action="${base}/recordings/${escapeHtml(r.id)}/delete"><button type="submit">Delete</button></form>
+</div>`;
 }
 
 // A document's own page — where "record or upload multiple recordings per
@@ -263,7 +290,7 @@ function renderDocumentDetail(caseRow, doc, recordings) {
 
 <h2>Notes &amp; recordings</h2>
 <p class="hint">Your own thinking about this document, dated, as many as you like, added whenever something changes — never shared, never entrusted-visible.</p>
-${recordings.length ? recordings.map(renderRecordingRow).join("\n") : `<p class="hint">Nothing recorded yet.</p>`}
+${recordings.length ? recordings.map((r) => renderRecordingRow(`${base}/documents/${escapeHtml(doc.id)}`, r)).join("\n") : `<p class="hint">Nothing recorded yet.</p>`}
 
 <h3>Add one</h3>
 <form method="post" action="${base}/documents/${escapeHtml(doc.id)}/recordings" id="recordingForm" data-blob-upload>
@@ -373,6 +400,14 @@ ${patterns.length ? patterns.map(renderPattern).join("\n") : `<p class="hint">No
 <label for="description">What you're noticing</label>
 <textarea id="description" name="description" required></textarea>
 <button type="submit">Flag pattern</button>
+</form>
+
+<h2>Delete this case</h2>
+<p class="hint">Removes the case and everything under it — every timeline entry, every document and its recordings — permanently. Type the case title exactly to confirm.</p>
+<form method="post" action="${base}/delete">
+<label for="confirmTitle">Case title</label>
+<input type="text" id="confirmTitle" name="confirmTitle" placeholder="${escapeHtml(caseRow.title)}" required>
+<button type="submit">Delete case</button>
 </form>`,
   );
 }
@@ -637,6 +672,14 @@ export async function handleBenchPost(request, env, url) {
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
+    const entryDeleteMatch = path.match(/^case\/([^/]+)\/entries\/([^/]+)\/delete$/);
+    if (entryDeleteMatch) {
+      const [, caseId, entryId] = entryDeleteMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      await deleteEntry(env, entryId);
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
     const glossaryMatch = path.match(/^case\/([^/]+)\/glossary$/);
     if (glossaryMatch) {
       const caseId = glossaryMatch[1];
@@ -679,6 +722,37 @@ export async function handleBenchPost(request, env, url) {
       if (!(await getCase(env, caseId))) return notFound();
       await setDocumentShared(env, docId, action === "share");
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
+    const documentDeleteMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/delete$/);
+    if (documentDeleteMatch) {
+      const [, caseId, docId] = documentDeleteMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
+      await deleteDocumentAndBlobs(env, docId);
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
+    const recordingDeleteMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings\/([^/]+)\/delete$/);
+    if (recordingDeleteMatch) {
+      const [, caseId, docId, recordingId] = recordingDeleteMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      const recording = await getDocumentRecording(env, recordingId);
+      if (!recording || recording.document_id !== docId) return notFound();
+      if (recording.audio_storage_ref) await deleteBlobRefs(env, [recording.audio_storage_ref]);
+      await deleteDocumentRecording(env, recordingId);
+      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+    }
+
+    const caseDeleteMatch = path.match(/^case\/([^/]+)\/delete$/);
+    if (caseDeleteMatch) {
+      const caseId = caseDeleteMatch[1];
+      const caseRow = await getCase(env, caseId);
+      if (!caseRow) return notFound();
+      const confirmTitle = (form.get("confirmTitle") || "").trim();
+      if (confirmTitle !== caseRow.title) return html(errorPage(`That doesn't match the case title exactly ("${caseRow.title}") — nothing was deleted.`), 400);
+      await deleteCaseAndBlobs(env, caseId);
+      return Response.redirect(`https://darius.life${PREFIX}`, 303);
     }
 
     const recordingMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings$/);

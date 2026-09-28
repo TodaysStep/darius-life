@@ -39,6 +39,45 @@ export async function findOrCreateCaseByNumber(db, caseNumber, newCaseId) {
   return { id: newCaseId, title, case_number: caseNumber || null, status: "open" };
 }
 
+// Every R2 key anything under this case owns — every upload's own bytes,
+// every recording's audio — so the caller can delete each from R2 before
+// deleteCase removes the rows that named them. Same non-deleting contract
+// as listDocumentBlobRefs: this file only ever touches D1.
+export async function listCaseBlobRefs(db, caseId) {
+  const { results: docs } = await db.prepare("SELECT id, storage_kind, storage_ref FROM documents WHERE case_id = ?").bind(caseId).all();
+  const documentRefs = docs.filter((d) => d.storage_kind === "upload").map((d) => d.storage_ref);
+  const docIds = docs.map((d) => d.id);
+  let recordingRefs = [];
+  if (docIds.length) {
+    const placeholders = docIds.map(() => "?").join(",");
+    const { results: recordings } = await db.prepare(
+      `SELECT audio_storage_ref FROM document_recordings WHERE document_id IN (${placeholders}) AND audio_storage_ref IS NOT NULL`,
+    ).bind(...docIds).all();
+    recordingRefs = recordings.map((r) => r.audio_storage_ref);
+  }
+  return [...documentRefs, ...recordingRefs];
+}
+
+// Removes a case and everything under it — entries, documents, their
+// recordings, glossary/pattern/entrusted-note rows scoped to it. Deepest
+// first. The caller (bench-working.js) requires Darius to type the case's
+// own title back before this is ever called — see its own route for why —
+// this function itself performs no confirmation, only the deletion.
+export async function deleteCase(db, caseId) {
+  const { results: docs } = await db.prepare("SELECT id FROM documents WHERE case_id = ?").bind(caseId).all();
+  const docIds = docs.map((d) => d.id);
+  if (docIds.length) {
+    const placeholders = docIds.map(() => "?").join(",");
+    await db.prepare(`DELETE FROM document_recordings WHERE document_id IN (${placeholders})`).bind(...docIds).run();
+  }
+  await db.prepare("DELETE FROM documents WHERE case_id = ?").bind(caseId).run();
+  await db.prepare("DELETE FROM docket_entries WHERE case_id = ?").bind(caseId).run();
+  await db.prepare("DELETE FROM glossary_terms WHERE case_id = ?").bind(caseId).run();
+  await db.prepare("DELETE FROM patterns WHERE case_id = ?").bind(caseId).run();
+  await db.prepare("DELETE FROM entrusted_notes WHERE case_id = ?").bind(caseId).run();
+  await db.prepare("DELETE FROM cases WHERE id = ?").bind(caseId).run();
+}
+
 export async function listEntries(db, caseId) {
   const { results } = await db.prepare(
     "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",
@@ -88,6 +127,15 @@ export async function setEntryShared(db, id, shared) {
   await db.prepare(
     `UPDATE docket_entries SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
   ).bind(id).run();
+}
+
+// Deleting an entry never deletes a document attached to it — a real PDF
+// isn't collateral damage for removing the wrong docket line. Any document
+// pointing at this entry becomes a general case document instead (same
+// meaning as if it had never been attached to one).
+export async function deleteEntry(db, id) {
+  await db.prepare("UPDATE documents SET entry_id = NULL WHERE entry_id = ?").bind(id).run();
+  await db.prepare("DELETE FROM docket_entries WHERE id = ?").bind(id).run();
 }
 
 export async function listGlossary(db, caseId) {
@@ -172,6 +220,25 @@ export async function setDocumentShared(db, id, shared) {
   ).bind(id).run();
 }
 
+// Every R2 key a document owns — its own bytes (if it's an upload; a
+// pasted-in link owns no bytes here) plus every recording attached to it —
+// so the caller can delete each one from R2 before these rows disappear.
+// Never deletes from R2 itself: this file only ever touches D1.
+export async function listDocumentBlobRefs(db, documentId) {
+  const doc = await db.prepare("SELECT storage_kind, storage_ref FROM documents WHERE id = ?").bind(documentId).first();
+  const { results: recordings } = await db.prepare(
+    "SELECT audio_storage_ref FROM document_recordings WHERE document_id = ? AND audio_storage_ref IS NOT NULL",
+  ).bind(documentId).all();
+  const refs = recordings.map((r) => r.audio_storage_ref);
+  if (doc && doc.storage_kind === "upload") refs.push(doc.storage_ref);
+  return refs;
+}
+
+export async function deleteDocument(db, id) {
+  await db.prepare("DELETE FROM document_recordings WHERE document_id = ?").bind(id).run();
+  await db.prepare("DELETE FROM documents WHERE id = ?").bind(id).run();
+}
+
 // Recordings (and/or typed notes) about one specific document, dated,
 // any number of them — Darius adding his thinking about a document as it
 // develops over time, not one note fixed at upload. Working-side only,
@@ -191,6 +258,14 @@ export async function addDocumentRecording(db, { id, documentId, caseId, notedAt
     `INSERT INTO document_recordings (id, document_id, case_id, noted_at, body, audio_storage_ref, audio_mime_type, audio_duration_seconds)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, documentId, caseId, notedAt, body || null, audioStorageRef || null, audioMimeType || null, audioDurationSeconds || null).run();
+}
+
+export async function getDocumentRecording(db, id) {
+  return db.prepare("SELECT * FROM document_recordings WHERE id = ?").bind(id).first();
+}
+
+export async function deleteDocumentRecording(db, id) {
+  await db.prepare("DELETE FROM document_recordings WHERE id = ?").bind(id).run();
 }
 
 // Entrusted notes — occasional notes Darius (or the desk, on his behalf)
