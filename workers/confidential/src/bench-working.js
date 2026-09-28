@@ -39,6 +39,7 @@ import { sha256Hex } from "../../shared/bench-crypto.js";
 import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
+import { summarizeCase } from "../../shared/bench-case-summary.js";
 import { BENCH_CLIENT_JS } from "./bench-client-script.js";
 
 export const PREFIX = "/bench/";
@@ -103,6 +104,37 @@ async function deleteCaseAndBlobs(env, caseId) {
   const refs = await data.listCaseBlobRefs(env.BENCH_NOTES, caseId);
   await deleteBlobRefs(env, refs);
   await data.deleteCase(env.BENCH_NOTES, caseId);
+}
+
+// Re-reads the whole case and asks bench-case-summary.js to synthesize it
+// fresh — the one place that happens, called after every write that
+// changes what's on record. Never throws: a failed regeneration just
+// leaves the previous summary in place until the next successful write,
+// same as any other best-effort background task in this file.
+export async function regenerateCaseSummary(env, caseId) {
+  const caseRow = await getCase(env, caseId);
+  if (!caseRow) return;
+  const [entries, documents, notes, patterns, glossary] = await Promise.all([
+    listEntries(env, caseId),
+    listDocuments(env, caseId),
+    listEntrustedNotes(env, caseId),
+    listPatterns(env, caseId),
+    listGlossary(env, caseId),
+  ]);
+  const { summary } = await summarizeCase(env, { caseRow, entries, documents, notes, patterns, glossary });
+  if (summary) await data.updateCaseSummary(env.BENCH_NOTES, caseId, summary);
+}
+
+// Fires regeneration without making the caller (a redirect response) wait
+// on an AI call. ctx.waitUntil keeps it alive past the response in the real
+// Workers runtime; without a ctx (tests, or any future caller that omits
+// one), the promise still runs — just not guaranteed to finish if the
+// process exits, which only matters outside a test process that stays
+// alive for its own assertions.
+function regenerateCaseSummaryInBackground(env, ctx, caseId) {
+  const task = regenerateCaseSummary(env, caseId).catch(() => {});
+  if (ctx?.waitUntil) ctx.waitUntil(task);
+  return task;
 }
 const addEntrustedNote = (env, fields) => data.addEntrustedNote(env.BENCH_NOTES, fields);
 const listGrants = (env) => data.listGrants(env.BENCH_NOTES);
@@ -261,6 +293,22 @@ function renderNoteRow(n) {
   return `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`;
 }
 
+// The one place bench-case-summary.js's output is shown — deliberately
+// never inline with Darius's own notes above without this label, and
+// never in a form that could be mistaken for something he wrote himself.
+function renderCaseSummary(base, caseRow) {
+  const refreshForm = `<form method="post" action="${base}/summary/refresh"><button type="submit">Refresh summary now</button></form>`;
+  if (!caseRow.ai_summary) {
+    return `<h2>Case summary</h2>
+<p class="hint">Generated automatically from what's on record below — not legal advice, not a prediction, and never a substitute for reading the record yourself. Nothing to summarize yet.</p>
+${refreshForm}`;
+  }
+  return `<h2>Case summary</h2>
+<p class="hint">Machine-generated from everything on record below (entries, documents, notes, patterns, glossary) — not legal advice, not a prediction, never Darius's own words. Regenerates automatically as the record changes.${caseRow.ai_summary_updated_at ? ` Last updated ${escapeHtml(caseRow.ai_summary_updated_at)}.` : ""}</p>
+<div class="card" style="white-space:pre-wrap">${escapeHtml(caseRow.ai_summary)}</div>
+${refreshForm}`;
+}
+
 function formatDuration(seconds) {
   const s = Math.round(seconds);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -329,6 +377,8 @@ function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes
     caseRow.title,
     `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">${escapeHtml(caseRow.status)}${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
 <p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+
+${renderCaseSummary(base, caseRow)}
 
 <h2>Timeline</h2>
 <p class="hint">Chronological, dated. Each entry can be shared to the entrusted side on its own — sharing shows only the date and the fact, never your recommended direction, commentary, or court takeaways.</p>
@@ -566,7 +616,7 @@ export async function handleBenchPut(request, env, url) {
   }
 }
 
-export async function handleBenchPost(request, env, url) {
+export async function handleBenchPost(request, env, url, ctx) {
   const payload = await requireAccess(request, env);
   if (!payload) return forbidden();
 
@@ -621,6 +671,7 @@ export async function handleBenchPost(request, env, url) {
       const docId = crypto.randomUUID();
       await addDocument(env, { id: docId, caseId, caseLabel: caseRow.title, entryId, title: filename, storageKind: "upload", storageRef: key });
 
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -642,6 +693,7 @@ export async function handleBenchPost(request, env, url) {
         commentary: form.get("commentary"),
         courtTakeaways: form.get("courtTakeaways"),
       });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -669,6 +721,7 @@ export async function handleBenchPost(request, env, url) {
         courtTakeaways: form.get("courtTakeaways"),
         source: "manual",
       });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -677,6 +730,7 @@ export async function handleBenchPost(request, env, url) {
       const [, caseId, entryId] = entryDeleteMatch;
       if (!(await getCase(env, caseId))) return notFound();
       await deleteEntry(env, entryId);
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -688,6 +742,7 @@ export async function handleBenchPost(request, env, url) {
       const definition = form.get("definition");
       if (!term || !definition) return html(errorPage("A glossary entry needs a term and a definition."), 400);
       await addGlossaryTerm(env, { id: crypto.randomUUID(), caseId, term, definition });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -700,6 +755,7 @@ export async function handleBenchPost(request, env, url) {
       const description = form.get("description");
       if (!subjectName || !description) return html(errorPage("A pattern needs a name and a description."), 400);
       await addPattern(env, { id: crypto.randomUUID(), caseId, subjectType: subjectType || "other", subjectName, description });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -713,6 +769,7 @@ export async function handleBenchPost(request, env, url) {
       if (!title || !storageRef) return html(errorPage("A document needs a title and where it lives."), 400);
       if (!data.isPublishableStorageRef(storageRef)) return html(errorPage("Where it lives must be an http(s) address."), 400);
       await addDocument(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, entryId: form.get("entryId"), title, storageRef, filedDate: form.get("filedDate") });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -730,6 +787,7 @@ export async function handleBenchPost(request, env, url) {
       if (!(await getCase(env, caseId))) return notFound();
       if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
       await deleteDocumentAndBlobs(env, docId);
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -741,6 +799,7 @@ export async function handleBenchPost(request, env, url) {
       if (!recording || recording.document_id !== docId) return notFound();
       if (recording.audio_storage_ref) await deleteBlobRefs(env, [recording.audio_storage_ref]);
       await deleteDocumentRecording(env, recordingId);
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
     }
 
@@ -753,6 +812,17 @@ export async function handleBenchPost(request, env, url) {
       if (confirmTitle !== caseRow.title) return html(errorPage(`That doesn't match the case title exactly ("${caseRow.title}") — nothing was deleted.`), 400);
       await deleteCaseAndBlobs(env, caseId);
       return Response.redirect(`https://darius.life${PREFIX}`, 303);
+    }
+
+    // A deliberate action Darius is waiting on, unlike every other
+    // regenerateCaseSummaryInBackground call site above — so this one
+    // awaits the regeneration itself rather than backgrounding it.
+    const summaryRefreshMatch = path.match(/^case\/([^/]+)\/summary\/refresh$/);
+    if (summaryRefreshMatch) {
+      const caseId = summaryRefreshMatch[1];
+      if (!(await getCase(env, caseId))) return notFound();
+      await regenerateCaseSummary(env, caseId);
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
     const recordingMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings$/);
@@ -787,6 +857,7 @@ export async function handleBenchPost(request, env, url) {
         audioStorageRef,
         audioMimeType,
       });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
     }
 

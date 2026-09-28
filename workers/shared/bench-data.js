@@ -78,6 +78,14 @@ export async function deleteCase(db, caseId) {
   await db.prepare("DELETE FROM cases WHERE id = ?").bind(caseId).run();
 }
 
+// bench-case-summary.js's own synthesis, regenerated in the background —
+// see bench-working.js's regenerateCaseSummary and its call sites.
+export async function updateCaseSummary(db, caseId, summary) {
+  await db.prepare(
+    "UPDATE cases SET ai_summary = ?, ai_summary_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+  ).bind(summary, caseId).run();
+}
+
 export async function listEntries(db, caseId) {
   const { results } = await db.prepare(
     "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",

@@ -19,6 +19,14 @@ CREATE TABLE IF NOT EXISTS cases (
   court         TEXT,
   case_number   TEXT,
   status        TEXT NOT NULL DEFAULT 'open',   -- open | closed | stayed
+  -- bench-case-summary.js's own synthesis of everything on record for this
+  -- case (entries, documents, notes, patterns, glossary) — regenerated in
+  -- the background after any write that changes the record, never by
+  -- Darius's own hand. Null until the first entry or document exists.
+  -- Never legal advice, never a prediction — see that module's own prompt
+  -- for the exact boundary, and the UI's own label for how it's shown.
+  ai_summary            TEXT,
+  ai_summary_updated_at TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

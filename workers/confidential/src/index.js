@@ -12,7 +12,7 @@
 import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // Cloudflare Access sends a browser back to exactly the path it first
@@ -24,7 +24,11 @@ export default {
 
     if (url.pathname.startsWith(BENCH_PREFIX)) {
       if (request.method === "GET") return handleBenchGet(request, env, url);
-      if (request.method === "POST") return handleBenchPost(request, env, url);
+      // ctx is threaded through only here: several POST routes trigger a
+      // case summary regeneration (bench-case-summary.js) via
+      // ctx.waitUntil, so the redirect this returns doesn't wait on an AI
+      // call — see regenerateCaseSummaryInBackground in bench-working.js.
+      if (request.method === "POST") return handleBenchPost(request, env, url, ctx);
       // PUT streams a blob's raw bytes straight to R2 (see bench-working.js's
       // own header) — deliberately not a POST, so the body is never the
       // multipart/form-data request.formData() would otherwise have to

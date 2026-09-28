@@ -581,3 +581,98 @@ test("deleting a case removes every document's R2 bytes and every recording's au
   assert.equal(await fakeR2.get("bench-blobs/doc-1/motion.pdf"), null);
   assert.equal(await fakeR2.get("bench-blobs/r1/voice.m4a"), null);
 });
+
+// A stub ctx.waitUntil that just collects the tasks so a test can await
+// them itself — mirrors the real Workers runtime's contract (keep the
+// promise alive past the response) closely enough for regeneration to be
+// observable without a real Workers environment.
+function stubCtx() {
+  const tasks = [];
+  return { ctx: { waitUntil: (p) => tasks.push(p) }, drain: () => Promise.all(tasks) };
+}
+
+test("adding a docket entry regenerates the case summary in the background via ctx.waitUntil", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { response: "1. Overview\nA family matter, open." }; } };
+
+  const { ctx, drain } = stubCtx();
+  const form = new URLSearchParams({ entryDate: "2026-09-28", fact: "Hearing held." });
+  const req = authedRequest("https://darius.life/bench/case/case-1/entries", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/entries"), ctx);
+  assert.equal(res.status, 303);
+
+  // The redirect above didn't wait on the AI call — ctx.waitUntil is what
+  // keeps it alive, same as the real Workers runtime.
+  assert.equal(calls, 0);
+  await drain();
+  assert.equal(calls, 1);
+  assert.match(fakeD1.tables.cases[0].ai_summary, /Overview/);
+  assert.ok(fakeD1.tables.cases[0].ai_summary_updated_at);
+});
+
+test("sharing or unsharing a docket entry does not regenerate the case summary — the underlying facts haven't changed", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28", fact: "Hearing held.", source: "manual", shared_at: null, created_at: "t", updated_at: "t" });
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { response: "Overview." }; } };
+
+  const { ctx, drain } = stubCtx();
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/entries/e1/share", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/entries/e1/share"), ctx,
+  );
+  assert.equal(res.status, 303);
+  await drain();
+  assert.equal(calls, 0);
+  assert.equal(fakeD1.tables.cases[0].ai_summary, null);
+});
+
+test("POST /bench/case/:id/summary/refresh regenerates synchronously — the response itself waits on it, unlike every other write", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28", fact: "Hearing held.", source: "manual", shared_at: null, created_at: "t", updated_at: "t" });
+  env.AI = { run: async () => ({ response: "1. Overview\nFresh summary." }) };
+
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/summary/refresh", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/summary/refresh"),
+  );
+  assert.equal(res.status, 303);
+  // No ctx.waitUntil was passed at all, yet the summary is already there —
+  // proof this route awaits regeneration itself rather than backgrounding it.
+  assert.match(fakeD1.tables.cases[0].ai_summary, /Fresh summary/);
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  const html = await detail.text();
+  assert.match(html, /Fresh summary/);
+  assert.match(html, /not legal advice/);
+});
+
+test("POST /bench/case/:id/summary/refresh on a nonexistent case is 404 and calls no AI", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { response: "x" }; } };
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/nope/summary/refresh", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/nope/summary/refresh"),
+  );
+  assert.equal(res.status, 404);
+  assert.equal(calls, 0);
+});
+
+test("a case with no ai_summary yet shows the not-yet-generated state, not a blank section", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  const html = await detail.text();
+  assert.match(html, /Nothing to summarize yet/);
+  assert.match(html, /Refresh summary now/);
+});

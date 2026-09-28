@@ -152,6 +152,40 @@ Darius's own docket:
   `renderEntrustedView` function the real entrusted login calls — not a
   reimplementation that could drift — with a red banner, no session cookie,
   no passphrase, read-only.
+- A **case summary** (`workers/shared/bench-case-summary.js`), shown at the
+  top of each case page, side by side with Darius's own notes. It is
+  deliberately **not** legal advice, a prediction, or a recommendation —
+  those are refused directly in the prompt itself
+  (`buildPrompt`: "never give legal advice, never recommend a course of
+  action, never predict who will win or lose, and never speculate about
+  anything not written in the record"), not just described here, and
+  `bench-case-summary.test.mjs` asserts that exact language actually reaches
+  the model on every call. Its only job is synthesizing what's already on
+  record — every timeline entry (including Darius's own commentary and
+  recommended direction, which stay working-side-only, same as everywhere
+  else in this file — never sent to the entrusted side), every document
+  title, every note sent to guests, every pattern and glossary term — into
+  one organized read: overview, chronological summary, documents on file,
+  and anything the record itself flags as upcoming. A case with nothing on
+  record yet gets no summary at all, not a hallucinated one. It regenerates
+  itself automatically, in the background (`regenerateCaseSummaryInBackground`,
+  via `ctx.waitUntil` so the write that triggered it never waits on an AI
+  call) after any write that changes what's on record — a new or edited or
+  deleted entry, a new document or deleted one, a new glossary term or
+  pattern, a new or deleted recording — so it keeps improving as the case
+  file grows, the way rereading your own notes would. Sharing, unsharing,
+  and deleting the case itself don't trigger it, since neither changes the
+  underlying facts (deleting the case removes the summary along with
+  everything else). A **"Refresh summary now"** button on the case page
+  calls the same regeneration synchronously instead, since that's a
+  deliberate action Darius is waiting on. Every showing of the summary is
+  labeled as machine-generated, never presented as indistinguishable from
+  Darius's own words, mirroring the same "auto-extracted" precedent already
+  used for AI-read upload facts above. Uses Cloudflare Workers AI
+  (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, the same account capability
+  the upload reader already uses, no separate key) — a general-purpose
+  model, not a legal one, so its output is an organizing aid, never
+  authority.
 
 Data lives in Cloudflare D1, never this repo. Gated by a pre-existing
 Cloudflare Access application ("confidential legal area," policy "Allowed
