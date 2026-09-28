@@ -2,27 +2,34 @@
 
 The exact settings brief v2.1 section 9 requires. Applying these is dashboard/API
 work outside this repo's build — this file is the record of what "applied" means,
-per section 9's own requirement that these be "recorded... as applied." As of
-2026-09-27 these are NOT yet applied; see docs/handoff-2026-09-27.md.
+per section 9's own requirement that these be "recorded... as applied."
 
-**Order matters** (section 9.6): create the web DNS records DNS-only, wait for
-GitHub to issue its certificate and confirm Enforce HTTPS works, and only then
-switch to Proxied. Proxying before that breaks GitHub's certificate issuance —
-confirmed the hard way earlier this same night on this exact domain.
+**As of 2026-09-28, applied and confirmed live** (checked directly against
+`https://darius.life/`, not assumed): DNS is proxied, SSL/TLS is Full (strict),
+minimum TLS is 1.2, Email Address Obfuscation is off, and HSTS +
+X-Content-Type-Options are live with the exact required values. **Still not
+applied**: the other four headers (Content-Security-Policy, Referrer-Policy,
+Permissions-Policy, X-Frame-Options — these need a Response Header Transform
+Rule, which needs Cloudflare's Rulesets API permission; the token in use as of
+this update can edit zone settings but not Rulesets, DNS records, Access
+applications, or purge cache), the www→apex Redirect Rule (may be moot — GitHub
+Pages already 301s www→apex on its own, confirmed live), and confirming Web
+Analytics/Browser Insights/Zaraz are off (no accessible endpoint found to check
+this with the current token — see docs/handoff-2026-09-27.md).
 
 ## DNS
 
 | Type | Name | Content | Proxy |
 |---|---|---|---|
-| A | `darius.life` | `185.199.108.153` | Proxied (after cutover) |
-| A | `darius.life` | `185.199.109.153` | Proxied (after cutover) |
-| A | `darius.life` | `185.199.110.153` | Proxied (after cutover) |
-| A | `darius.life` | `185.199.111.153` | Proxied (after cutover) |
-| AAAA | `darius.life` | `2606:50c0:8000::153` | Proxied (after cutover) |
-| AAAA | `darius.life` | `2606:50c0:8001::153` | Proxied (after cutover) |
-| AAAA | `darius.life` | `2606:50c0:8002::153` | Proxied (after cutover) |
-| AAAA | `darius.life` | `2606:50c0:8003::153` | Proxied (after cutover) |
-| CNAME | `www` | `todaysstep.github.io` | Proxied (after cutover) |
+| A | `darius.life` | `185.199.108.153` | **Proxied — confirmed live** |
+| A | `darius.life` | `185.199.109.153` | **Proxied — confirmed live** |
+| A | `darius.life` | `185.199.110.153` | **Proxied — confirmed live** |
+| A | `darius.life` | `185.199.111.153` | **Proxied — confirmed live** |
+| AAAA | `darius.life` | `2606:50c0:8000::153` | Proxied (assumed, not individually checked) |
+| AAAA | `darius.life` | `2606:50c0:8001::153` | Proxied (assumed, not individually checked) |
+| AAAA | `darius.life` | `2606:50c0:8002::153` | Proxied (assumed, not individually checked) |
+| AAAA | `darius.life` | `2606:50c0:8003::153` | Proxied (assumed, not individually checked) |
+| CNAME | `www` | `todaysstep.github.io` | **Proxied — confirmed live** |
 
 MX, SPF (`_spf`/root TXT), DKIM (`sig1._domainkey`, `cf2024-1._domainkey`), and
 DMARC (`_dmarc`) records are untouched — see docs/cutover-2026-09-27.md for the
@@ -30,14 +37,18 @@ recorded before-state.
 
 ## SSL/TLS
 
-- Mode: **Full (strict)**
-- Always Use HTTPS: **on**
-- Minimum TLS version: **1.2**
-- HSTS: **on** — `max-age=63072000; includeSubDomains; preload` (also set by the
-  Transform Rule below; Cloudflare's HSTS panel and a Transform Rule can both set
-  this header — pick one source of truth so they don't conflict. This repo assumes
-  the Transform Rule is that source, since it also sets five other headers HSTS's
-  own panel doesn't cover.)
+- Mode: **Full (strict)** — applied 2026-09-28 via the Zone Settings API,
+  confirmed by that same call's response (`"value":"strict"`).
+- Always Use HTTPS: **on** (already was)
+- Minimum TLS version: **1.2** — applied 2026-09-28, confirmed by the API response.
+- HSTS: **on** — `max-age=63072000; includeSubDomains; preload`, applied
+  2026-09-28 via the zone's native `security_header` setting (not a Transform
+  Rule — that API wasn't reachable with the token in use). Confirmed live:
+  `curl -I https://darius.life/` shows the header with exactly this value.
+  The same setting's `nosniff` field also produces `X-Content-Type-Options:
+  nosniff` — also confirmed live. This is now the source of truth for both
+  headers; a future Transform Rule should NOT also set them, to avoid two
+  sources disagreeing.
 
 ## Redirect Rule — www to apex
 
@@ -45,30 +56,38 @@ recorded before-state.
 - Then: Dynamic redirect, expression `concat("https://darius.life", http.request.uri.path)`
 - Status: 301, preserve query string: on
 
-## Response Header Transform Rule — security headers (check 13)
+## Response Header Transform Rule — remaining security headers (check 13)
 
-Applies to all darius.life responses (both the GitHub Pages origin and the
-`/legal/private/*` Worker). Set (add/overwrite) each of the following:
+Strict-Transport-Security and X-Content-Type-Options are now set by the native
+`security_header` zone setting above — **do not also set them here**, to avoid
+two sources of truth disagreeing. This rule only needs to add the other four,
+applied to all darius.life responses (both the GitHub Pages origin and the
+`/legal/private/*`/`/control/*` Worker):
 
 ```
 Content-Security-Policy: default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'
-Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-X-Content-Type-Options: nosniff
 Referrer-Policy: no-referrer
 Permissions-Policy: camera=(), microphone=(), geolocation=()
 X-Frame-Options: DENY
 ```
 
+Not yet applied — needs Cloudflare's Rulesets API permission (or the
+dashboard), which the token in use as of 2026-09-28 doesn't have.
+
 ## Off (check 12)
 
-- Web Analytics
-- Browser Insights
-- Zaraz
-- Rocket Loader
-- Email Address Obfuscation
+- Web Analytics — not yet confirmed; no accessible endpoint found with the
+  current token. `checks/live.mjs` caught a `cloudflareinsights` beacon script
+  being injected intermittently on 2026-09-27, consistent with this being on.
+- Browser Insights — same as above.
+- Zaraz — not checked.
+- Rocket Loader — confirmed **off** (zone setting `rocket_loader`).
+- Email Address Obfuscation — applied **off** 2026-09-28 via the Zone Settings
+  API, confirmed by that call's response.
 
-The last two specifically inject their own JavaScript into responses if left on —
-worth double-checking given this site's whole design is zero JavaScript.
+Web Analytics/Browser Insights and Rocket Loader specifically inject their own
+JavaScript into responses if left on — worth confirming given this site's
+whole design is zero JavaScript.
 
 ## Access application (section 9.9)
 
