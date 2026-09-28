@@ -86,6 +86,12 @@ textarea { min-height: 4em; resize: vertical; }
 .case-row .status { font-size: 0.78em; opacity: 0.7; }
 .note { font-size: 0.88em; margin-top: 1.5em; }
 .error { color: #7A2E1E; font-weight: bold; }
+.upcoming { border-left: 4px solid #7A2E1E; }
+@media print {
+  header.bench-header a, form, button, .ticker, p.note, .preview-banner, details summary { display: none !important; }
+  body { background: #fff !important; }
+  .page { max-width: none; }
+}
 `;
 
 // img-src explicitly allows https://darius.life — the icon is always hosted

@@ -44,8 +44,9 @@ export async function findOrCreateCaseByNumber(db, caseNumber, newCaseId) {
 // deleteCase removes the rows that named them. Same non-deleting contract
 // as listDocumentBlobRefs: this file only ever touches D1.
 export async function listCaseBlobRefs(db, caseId) {
-  const { results: docs } = await db.prepare("SELECT id, storage_kind, storage_ref FROM documents WHERE case_id = ?").bind(caseId).all();
+  const { results: docs } = await db.prepare("SELECT id, storage_kind, storage_ref, proof_of_service_ref FROM documents WHERE case_id = ?").bind(caseId).all();
   const documentRefs = docs.filter((d) => d.storage_kind === "upload").map((d) => d.storage_ref);
+  const proofRefs = docs.filter((d) => d.proof_of_service_ref).map((d) => d.proof_of_service_ref);
   const docIds = docs.map((d) => d.id);
   let recordingRefs = [];
   if (docIds.length) {
@@ -55,7 +56,7 @@ export async function listCaseBlobRefs(db, caseId) {
     ).bind(...docIds).all();
     recordingRefs = recordings.map((r) => r.audio_storage_ref);
   }
-  return [...documentRefs, ...recordingRefs];
+  return [...documentRefs, ...proofRefs, ...recordingRefs];
 }
 
 // Removes a case and everything under it — entries, documents, their
@@ -86,6 +87,13 @@ export async function updateCaseSummary(db, caseId, summary) {
   ).bind(summary, caseId).run();
 }
 
+// Darius's own reference notes for this case's court, entirely his own
+// words — never AI-generated, unlike ai_summary above. See the schema's
+// own comment on cases.local_rules_notes for why that distinction matters.
+export async function updateCaseLocalRules(db, caseId, notes) {
+  await db.prepare("UPDATE cases SET local_rules_notes = ? WHERE id = ?").bind(notes || null, caseId).run();
+}
+
 export async function listEntries(db, caseId) {
   const { results } = await db.prepare(
     "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",
@@ -103,11 +111,15 @@ export async function getEntry(db, id) {
 // 'upload-ai-failed' (workers/shared/bench-document-ai.js's own read of an
 // uploaded document — never silently presented as the same thing as
 // Darius's own typed fact; the UI tags anything non-manual visibly).
-export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways, source }) {
+// entryKind: note (default, a chronological fact) | hearing | deadline —
+// never inferred, same "explicit or default, never guessed" rule as
+// source below. Drives bench-working.js's "Upcoming" banner: any hearing
+// or deadline entry whose date hasn't passed yet.
+export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways, source, entryKind }) {
   await db.prepare(
-    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source || "manual").run();
+    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways, source, entry_kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source || "manual", entryKind || "note").run();
   await db.prepare("UPDATE cases SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").bind(caseId).run();
 }
 
@@ -117,17 +129,18 @@ export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, rec
 // because Darius reviewing and saving an auto-extracted entry is him taking
 // authorship of it — the "auto-extracted" tag should stop showing once he's
 // done that, not linger on text he's since corrected himself.
-export async function updateEntry(db, id, { fact, recommendedDirection, commentary, courtTakeaways, source }) {
+export async function updateEntry(db, id, { fact, recommendedDirection, commentary, courtTakeaways, source, entryKind }) {
+  const entryKindValue = entryKind || "note";
   if (source) {
     await db.prepare(
-      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?, source = ?,
+      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?, source = ?, entry_kind = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
-    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source, id).run();
+    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source, entryKindValue, id).run();
   } else {
     await db.prepare(
-      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?,
+      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?, entry_kind = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
-    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, id).run();
+    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, entryKindValue, id).run();
   }
 }
 
@@ -144,6 +157,18 @@ export async function setEntryShared(db, id, shared) {
 export async function deleteEntry(db, id) {
   await db.prepare("UPDATE documents SET entry_id = NULL WHERE entry_id = ?").bind(id).run();
   await db.prepare("DELETE FROM docket_entries WHERE id = ?").bind(id).run();
+}
+
+// Every hearing/deadline entry across every case, for the case list page's
+// "Upcoming" tag per case — bench-working.js filters to entry_date >= today
+// and picks the soonest per case itself (date comparison isn't pushed into
+// SQL here, so this stays testable against the plain equality/IN matching
+// test-fake-d1.mjs actually implements).
+export async function listUpcomingEntries(db) {
+  const { results } = await db.prepare(
+    "SELECT * FROM docket_entries WHERE entry_kind IN (?, ?) ORDER BY entry_date ASC",
+  ).bind("hearing", "deadline").all();
+  return results;
 }
 
 export async function listGlossary(db, caseId) {
@@ -205,11 +230,15 @@ export function isPublishableStorageRef(ref) {
 // A directly uploaded file's storage_ref is a server-generated R2 key
 // (benchBlobKey below), never attacker- or founder-influenced text, so
 // the http(s) check — which exists for pasted-in links — doesn't apply to it.
+// A filedDate given up front means Darius already knows this was filed —
+// filing_status starts at "filed" rather than the usual "drafted" default,
+// so the case page doesn't show a redundant "mark filed" action for
+// something he's already told it was filed.
 export async function addDocument(db, { id, caseId, caseLabel, entryId, title, storageRef, storageKind = "link", filedDate }) {
   if (storageKind === "link" && !isPublishableStorageRef(storageRef)) throw new Error("storageRef must be an http(s) address.");
   await db.prepare(
-    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_kind, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(id, caseId, caseLabel, entryId || null, title, storageKind, storageRef, filedDate || null).run();
+    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_kind, storage_ref, filed_date, filing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, caseId, caseLabel, entryId || null, title, storageKind, storageRef, filedDate || null, filedDate ? "filed" : "drafted").run();
 }
 
 // The one place an R2 key is shaped for anything Bench Notes stores as
@@ -228,17 +257,42 @@ export async function setDocumentShared(db, id, shared) {
   ).bind(id).run();
 }
 
+// The paper-filing lifecycle, tracked explicitly rather than inferred from
+// filed_date alone — a record of what Darius has done, never guidance
+// about what he should file or when. filedDate is optional: he may know
+// he filed something today without knowing the court's own stamped date
+// yet, and can fill that in once he has it (calling this again just
+// overwrites both fields, which is fine — it's idempotent).
+export async function markDocumentFiled(db, id, filedDate) {
+  await db.prepare(
+    "UPDATE documents SET filing_status = ?, filed_date = ? WHERE id = ?",
+  ).bind("filed", filedDate || null, id).run();
+}
+
+// Same idea as markDocumentFiled, one step further — who was served, how,
+// and when, plus an optional proof of service (an R2 key if uploaded,
+// mirroring storage_ref's own convention, never a raw URL from user text
+// without the same http(s) validation storage_ref itself gets — see
+// isPublishableStorageRef and how bench-working.js's serve route uses it).
+export async function markDocumentServed(db, id, { servedAt, servedMethod, servedOn, proofOfServiceRef, proofOfServiceMimeType }) {
+  await db.prepare(
+    `UPDATE documents SET filing_status = ?, served_at = ?, served_method = ?, served_on = ?,
+     proof_of_service_ref = ?, proof_of_service_mime_type = ? WHERE id = ?`,
+  ).bind("served", servedAt || null, servedMethod || null, servedOn || null, proofOfServiceRef || null, proofOfServiceMimeType || null, id).run();
+}
+
 // Every R2 key a document owns — its own bytes (if it's an upload; a
 // pasted-in link owns no bytes here) plus every recording attached to it —
 // so the caller can delete each one from R2 before these rows disappear.
 // Never deletes from R2 itself: this file only ever touches D1.
 export async function listDocumentBlobRefs(db, documentId) {
-  const doc = await db.prepare("SELECT storage_kind, storage_ref FROM documents WHERE id = ?").bind(documentId).first();
+  const doc = await db.prepare("SELECT storage_kind, storage_ref, proof_of_service_ref FROM documents WHERE id = ?").bind(documentId).first();
   const { results: recordings } = await db.prepare(
     "SELECT audio_storage_ref FROM document_recordings WHERE document_id = ? AND audio_storage_ref IS NOT NULL",
   ).bind(documentId).all();
   const refs = recordings.map((r) => r.audio_storage_ref);
   if (doc && doc.storage_kind === "upload") refs.push(doc.storage_ref);
+  if (doc?.proof_of_service_ref) refs.push(doc.proof_of_service_ref);
   return refs;
 }
 
@@ -322,6 +376,25 @@ export async function addEntrustedNote(db, { id, caseId, caseLabel, body }) {
   await db.prepare(
     "INSERT INTO entrusted_notes (id, case_id, case_label, body) VALUES (?, ?, ?, ?)",
   ).bind(id, caseId, caseLabel, body).run();
+}
+
+// A plain, Darius-curated list — not case-scoped, not AI-generated, not
+// maintained by anyone but him. Seeded once (see schema/bench-notes.sql's
+// own comment) with the one entry verified directly rather than assumed;
+// everything else is his to add.
+export async function listResources(db) {
+  const { results } = await db.prepare("SELECT * FROM resources ORDER BY created_at ASC").all();
+  return results;
+}
+
+export async function addResource(db, { id, name, phone, url, notes }) {
+  await db.prepare(
+    "INSERT INTO resources (id, name, phone, url, notes) VALUES (?, ?, ?, ?, ?)",
+  ).bind(id, name, phone || null, url || null, notes || null).run();
+}
+
+export async function deleteResource(db, id) {
+  await db.prepare("DELETE FROM resources WHERE id = ?").bind(id).run();
 }
 
 // Entrusted access grants — the single universal passphrase per grant,

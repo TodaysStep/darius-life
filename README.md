@@ -202,8 +202,11 @@ Darius's own docket:
   title, every voice note's own content (a typed body, or a Whisper
   transcript once one exists), every note sent to guests, every pattern
   and glossary term — into one organized read: overview, chronological
-  summary, documents on file, and anything the record itself flags as
-  upcoming. A case with nothing on record yet gets no summary at all, not
+  summary, documents on file (with each one's own filing/service status,
+  stated exactly as recorded — see "Filing & service" below), and every
+  entry explicitly tagged as a hearing or deadline (never a date the
+  summary infers or calculates itself — see "Hearings & deadlines"
+  below). A case with nothing on record yet gets no summary at all, not
   a hallucinated one. It regenerates itself automatically, in the
   background (`regenerateCaseSummaryInBackground`,
   via `ctx.waitUntil` so the write that triggered it never waits on an AI
@@ -225,6 +228,54 @@ Darius's own docket:
   the upload reader already uses, no separate key) — a general-purpose
   model, not a legal one, so its output is an organizing aid, never
   authority.
+- **Hearings &amp; deadlines.** A docket entry can be tagged, explicitly,
+  as a Note (the default), a Hearing, or a Deadline (`docket_entries.
+  entry_kind`) — never inferred from its own wording, and never a date
+  Bench Notes calculates itself. Every hearing/deadline entry whose date
+  hasn't passed yet shows in an "Upcoming" banner on the case page,
+  soonest first, and the case list shows each case's own soonest one as a
+  tag — so the thing that actually matters day to day (what's coming up)
+  is visible without opening the timeline. Correcting a tagged entry back
+  to a plain note (the same **Edit** panel every entry already has) drops
+  it from "Upcoming" immediately.
+- **Filing &amp; service.** Every document now tracks its own real
+  lifecycle — drafted (the default), filed, or served
+  (`documents.filing_status`) — a record of what Darius has actually
+  done, never a deadline or requirement Bench Notes calculates or
+  recommends for him. A one-field "Mark filed" action on the case page
+  (just a date) is all filing needs; a document's own page then offers
+  "Mark served" — date, method (mail/personal/sheriff/other), who was
+  served, and an optional proof of service (a receipt, a signed
+  certificate, a sheriff's return), uploaded through the exact same
+  streaming blob-PUT flow every other upload here already uses, and
+  served back through its own Access-gated route
+  (`/bench/documents/:id/proof-of-service/file`) — never a raw URL.
+  Deleting a document or its case cleans up its proof of service the
+  same best-effort way every other R2 object here already does.
+- **A printable filing packet** (`/bench/case/:id/packet`) — a plain,
+  print-friendly index of every document in a case and its filing/service
+  status, reachable from the case page. Deliberately not a merged PDF:
+  actually combining the documents' own PDF bytes would mean parsing them
+  in this Worker, reintroducing the exact CPU-time risk moving PDF
+  extraction to `env.AI.toMarkdown()` (above) was built to avoid — a
+  browser's own Print-to-PDF (Ctrl/Cmd+P) on this plain page costs the
+  Worker nothing and needs no library at all.
+- **This court's rules &amp; procedure notes** (`cases.local_rules_notes`)
+  — a free-text field on each case page for Darius's own reference notes:
+  what a clerk or self-help center told him, his court's own local rules,
+  filing requirements. Entirely his own words, saved and shown as plain
+  text — never AI-generated (unlike the case summary above), and
+  deliberately never fed into the case summary's own prompt or otherwise
+  treated as a fact about the case, since a wrong guess at procedure is
+  exactly the kind of mistake that matters pro per.
+- **Resources** (`/bench/resources`, linked from the case list) — a
+  plain, Darius-curated list of courthouse self-help centers, legal aid,
+  and advocacy contacts. Not case-scoped, not AI-generated, not
+  maintained by anyone but him, with exactly one exception: seeded with
+  the National Domestic Violence Hotline (1-800-799-7233 /
+  thehotline.org), verified directly via a web search before being added
+  rather than assumed, since a wrong number in a safety context is a real
+  harm. Everything else on the page is his to add and delete.
 - **Runs entirely on the Workers Free plan — no Workers Paid plan
   required, anywhere in Bench Notes.** Checked directly against
   Cloudflare's own current published limits, not assumed: neither Worker's

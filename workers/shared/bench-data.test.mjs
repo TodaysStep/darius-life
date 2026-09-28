@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDocumentRecording, benchBlobKey, deleteCase, deleteDocument, deleteDocumentRecording, deleteEntry,
-  editRecordingTranscript, findOrCreateCaseByNumber, listCaseBlobRefs, listCaseRecordings, listDocumentBlobRefs,
-  listDocumentRecordings, updateRecordingTranscript,
+  addDocument, addDocumentRecording, addEntry, addResource, benchBlobKey, deleteCase, deleteDocument,
+  deleteDocumentRecording, deleteEntry, deleteResource, editRecordingTranscript, findOrCreateCaseByNumber,
+  listCaseBlobRefs, listCaseRecordings, listDocumentBlobRefs, listDocumentRecordings,
+  listResources, listUpcomingEntries, markDocumentFiled, markDocumentServed, updateCaseLocalRules, updateEntry,
+  updateRecordingTranscript,
 } from "./bench-data.js";
 import { createFakeD1 } from "./test-fake-d1.mjs";
 
@@ -136,6 +138,89 @@ test("deleting a recording just removes that one row", async () => {
   await deleteDocumentRecording(BENCH_NOTES, "r1");
   assert.equal(tables.document_recordings.length, 1);
   assert.equal(tables.document_recordings[0].id, "r2");
+});
+
+test("addEntry defaults entry_kind to note, but stores hearing/deadline explicitly when given", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addEntry(BENCH_NOTES, { id: "e1", caseId: "case-1", caseLabel: "X", entryDate: "2026-09-01", fact: "Filed." });
+  await addEntry(BENCH_NOTES, { id: "e2", caseId: "case-1", caseLabel: "X", entryDate: "2026-10-15", fact: "Hearing.", entryKind: "hearing" });
+  assert.equal(tables.docket_entries[0].entry_kind, "note");
+  assert.equal(tables.docket_entries[1].entry_kind, "hearing");
+});
+
+test("updateEntry changes entry_kind when given, and defaults to note when omitted — an edit form always submits the field, so this never silently downgrades a hearing behind the caller's back in practice", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addEntry(BENCH_NOTES, { id: "e1", caseId: "case-1", caseLabel: "X", entryDate: "2026-10-15", fact: "Hearing.", entryKind: "hearing" });
+  await updateEntry(BENCH_NOTES, "e1", { fact: "Hearing, rescheduled.", entryKind: "hearing" });
+  assert.equal(tables.docket_entries[0].entry_kind, "hearing");
+  assert.equal(tables.docket_entries[0].fact, "Hearing, rescheduled.");
+});
+
+test("listUpcomingEntries returns only hearing/deadline entries, soonest first, never plain notes", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addEntry(BENCH_NOTES, { id: "e1", caseId: "case-1", caseLabel: "X", entryDate: "2026-09-01", fact: "Just a note.", entryKind: "note" });
+  await addEntry(BENCH_NOTES, { id: "e2", caseId: "case-1", caseLabel: "X", entryDate: "2026-10-15", fact: "Hearing.", entryKind: "hearing" });
+  await addEntry(BENCH_NOTES, { id: "e3", caseId: "case-1", caseLabel: "X", entryDate: "2026-10-01", fact: "Deadline.", entryKind: "deadline" });
+  const rows = await listUpcomingEntries(BENCH_NOTES);
+  assert.deepEqual(rows.map((r) => r.id), ["e3", "e2"]);
+});
+
+test("addDocument with a filedDate up front starts filing_status at filed, not the usual drafted default", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addDocument(BENCH_NOTES, { id: "d1", caseId: "case-1", caseLabel: "X", title: "Motion", storageRef: "https://example.com/x", filedDate: "2026-09-01" });
+  await addDocument(BENCH_NOTES, { id: "d2", caseId: "case-1", caseLabel: "X", title: "Draft", storageRef: "https://example.com/y" });
+  assert.equal(tables.documents[0].filing_status, "filed");
+  assert.equal(tables.documents[1].filing_status, "drafted");
+});
+
+test("markDocumentFiled sets filing_status and filed_date", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "d1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "link", storage_ref: "https://example.com/x", shared_at: null, filing_status: "drafted", created_at: "t" });
+  await markDocumentFiled(BENCH_NOTES, "d1", "2026-09-15");
+  assert.equal(tables.documents[0].filing_status, "filed");
+  assert.equal(tables.documents[0].filed_date, "2026-09-15");
+});
+
+test("markDocumentServed sets filing_status, service details, and an optional proof of service", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "d1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "link", storage_ref: "https://example.com/x", shared_at: null, filing_status: "filed", filed_date: "2026-09-15", created_at: "t" });
+  await markDocumentServed(BENCH_NOTES, "d1", { servedAt: "2026-09-20", servedMethod: "mail", servedOn: "Respondent, Jane Doe", proofOfServiceRef: "bench-blobs/proof-1/receipt.pdf", proofOfServiceMimeType: "application/pdf" });
+  const row = tables.documents[0];
+  assert.equal(row.filing_status, "served");
+  assert.equal(row.served_at, "2026-09-20");
+  assert.equal(row.served_method, "mail");
+  assert.equal(row.served_on, "Respondent, Jane Doe");
+  assert.equal(row.proof_of_service_ref, "bench-blobs/proof-1/receipt.pdf");
+});
+
+test("a document's proof of service is included in the R2 refs to clean up, alongside its own bytes and its recordings' audio", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  const db = BENCH_NOTES;
+  await addDocument(db, { id: "d1", caseId: "case-1", caseLabel: "X", title: "Motion", storageKind: "upload", storageRef: "bench-blobs/d1/motion.pdf" });
+  await markDocumentServed(db, "d1", { servedAt: "t", proofOfServiceRef: "bench-blobs/proof-1/receipt.pdf" });
+  const refs = await listDocumentBlobRefs(db, "d1");
+  assert.deepEqual(new Set(refs), new Set(["bench-blobs/d1/motion.pdf", "bench-blobs/proof-1/receipt.pdf"]));
+  const caseRefs = await listCaseBlobRefs(db, "case-1");
+  assert.deepEqual(new Set(caseRefs), new Set(["bench-blobs/d1/motion.pdf", "bench-blobs/proof-1/receipt.pdf"]));
+});
+
+test("updateCaseLocalRules stores Darius's own reference notes for the case's court", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  await updateCaseLocalRules(BENCH_NOTES, "case-1", "Self-help center says: 3 copies, one for the clerk.");
+  assert.equal(tables.cases[0].local_rules_notes, "Self-help center says: 3 copies, one for the clerk.");
+});
+
+test("resources: add, list (oldest first), and delete — a plain Darius-curated list", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addResource(BENCH_NOTES, { id: "r1", name: "National Domestic Violence Hotline", phone: "1-800-799-7233", url: "https://www.thehotline.org" });
+  await addResource(BENCH_NOTES, { id: "r2", name: "County self-help center" });
+  const rows = await listResources(BENCH_NOTES);
+  assert.deepEqual(rows.map((r) => r.id), ["r1", "r2"]);
+
+  await deleteResource(BENCH_NOTES, "r1");
+  assert.equal(tables.resources.length, 1);
+  assert.equal(tables.resources[0].id, "r2");
 });
 
 test("deleting a case removes every entry, document, recording, glossary term, pattern, and note under it", async () => {

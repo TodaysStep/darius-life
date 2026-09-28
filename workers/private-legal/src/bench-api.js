@@ -91,6 +91,7 @@ export async function handleBenchApi(request, env, url) {
       await data.addEntry(db, {
         id, caseId: caseRow.id, caseLabel: caseRow.title, entryDate: body.entryDate, fact: body.fact,
         recommendedDirection: body.recommendedDirection, commentary: body.commentary, courtTakeaways: body.courtTakeaways,
+        entryKind: body.entryKind,
       });
       return json({ id }, 201);
     }
@@ -104,6 +105,7 @@ export async function handleBenchApi(request, env, url) {
         recommendedDirection: body.recommendedDirection ?? entry.recommended_direction,
         commentary: body.commentary ?? entry.commentary,
         courtTakeaways: body.courtTakeaways ?? entry.court_takeaways,
+        entryKind: body.entryKind ?? entry.entry_kind,
       });
       return okEmpty();
     }

@@ -55,6 +55,7 @@ export function createFakeD1() {
   const tables = {
     cases: [], docket_entries: [], patterns: [], glossary_terms: [],
     documents: [], entrusted_notes: [], access_grants: [], ingest_items: [], document_recordings: [],
+    resources: [],
   };
 
   function exec(sqlRaw, boundArgs) {
@@ -69,10 +70,10 @@ export function createFakeD1() {
       cols.forEach((c, i) => { row[c] = args[i]; });
       if (!("id" in row)) throw new Error(`fake-d1: INSERT into ${table} missing id`);
       if (table === "cases") { row.status ??= "open"; row.created_at ??= FAKE_NOW; row.updated_at ??= FAKE_NOW; }
-      if (table === "docket_entries") { row.source ??= "manual"; row.created_at ??= FAKE_NOW; row.updated_at ??= FAKE_NOW; }
+      if (table === "docket_entries") { row.source ??= "manual"; row.entry_kind ??= "note"; row.created_at ??= FAKE_NOW; row.updated_at ??= FAKE_NOW; }
       if (table === "patterns" || table === "glossary_terms") { row.created_at ??= FAKE_NOW; row.updated_at ??= FAKE_NOW; }
-      if (table === "documents" || table === "entrusted_notes" || table === "access_grants") row.created_at ??= FAKE_NOW;
-      if (table === "documents") row.shared_at ??= null;
+      if (table === "documents" || table === "entrusted_notes" || table === "access_grants" || table === "resources") row.created_at ??= FAKE_NOW;
+      if (table === "documents") { row.shared_at ??= null; row.filing_status ??= "drafted"; }
       if (table === "access_grants") row.revoked_at ??= null;
       tables[table].push(row);
       return { results: [], success: true };

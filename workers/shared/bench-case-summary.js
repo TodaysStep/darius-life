@@ -28,7 +28,12 @@ function serializeCase({ caseRow, entries, documents, notes, patterns, glossary,
   lines.push("\nTimeline entries (chronological facts and the founder's own notes about them):");
   if (!entries.length) lines.push("(none yet)");
   for (const e of entries) {
-    lines.push(`- ${e.entry_date}: ${e.fact}`);
+    // entry_kind is explicit, never inferred from the fact's own wording —
+    // the founder (or an edit) tagged this as a hearing/deadline himself,
+    // on a date he already entered. Surfaced directly so "noted for
+    // attention" below doesn't have to guess it from prose.
+    const kindTag = e.entry_kind && e.entry_kind !== "note" ? ` [${e.entry_kind.toUpperCase()}]` : "";
+    lines.push(`- ${e.entry_date}${kindTag}: ${e.fact}`);
     if (e.recommended_direction) lines.push(`  Recommended direction: ${e.recommended_direction}`);
     if (e.commentary) lines.push(`  Founder's commentary: ${e.commentary}`);
     if (e.court_takeaways) lines.push(`  Court takeaways: ${e.court_takeaways}`);
@@ -36,7 +41,17 @@ function serializeCase({ caseRow, entries, documents, notes, patterns, glossary,
 
   lines.push("\nDocuments on file:");
   if (!documents.length) lines.push("(none yet)");
-  for (const d of documents) lines.push(`- ${d.title}${d.filed_date ? ` (filed ${d.filed_date})` : ""}`);
+  for (const d of documents) {
+    // filing_status is what the founder has actually done, never a
+    // deadline or requirement Bench Notes calculated — see documents.
+    // filing_status's own schema comment.
+    const status = d.filing_status === "served"
+      ? `served${d.served_at ? ` ${d.served_at}` : ""}`
+      : d.filing_status === "filed"
+        ? `filed${d.filed_date ? ` ${d.filed_date}` : ""}`
+        : "drafted, not yet filed";
+    lines.push(`- ${d.title} (${status})`);
+  }
 
   // Darius's own words, whether typed or spoken and transcribed (Whisper,
   // via bench-transcribe.js) — a voice note not yet transcribed, or one
@@ -71,8 +86,8 @@ function buildPrompt(record) {
 Write the summary in this structure:
 1. Overview — case number, court, status, and what kind of matter this appears to be, based only on what's written.
 2. Chronological summary — what has happened, in order, based on the timeline entries.
-3. Documents on file — a short list.
-4. Noted for attention — dates, deadlines, or hearings the record itself mentions as upcoming or pending. Only what's explicitly written; never inferred or guessed.
+3. Documents on file — a short list, including each one's own filing/service status exactly as given (drafted, filed, or served). Never state or imply a document is filed or served unless its status says so.
+4. Upcoming — every entry explicitly tagged [HEARING] or [DEADLINE] below, with its date, in order. Never a date you calculated yourself, and never anything not tagged that way.
 
 If the record is too sparse to say much yet, say that plainly instead of padding it out. Do not add a disclaimer of your own — the person reading this already knows it's a generated summary, not legal advice.
 

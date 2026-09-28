@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS cases (
   -- for the exact boundary, and the UI's own label for how it's shown.
   ai_summary            TEXT,
   ai_summary_updated_at TEXT,
+  -- Darius's own reference notes for this case's court — its local rules,
+  -- filing requirements, what a clerk or self-help center told him. Plain
+  -- text he writes or pastes in himself, never AI-generated (unlike
+  -- ai_summary above): a wrong guess at procedure is exactly the kind of
+  -- mistake that matters pro per, so this stays entirely his own words,
+  -- sourced from his own court.
+  local_rules_notes TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -49,6 +56,12 @@ CREATE TABLE IF NOT EXISTS docket_entries (
   court_takeaways       TEXT,                -- what the court/filing actually said — working-side only
   shared_at             TEXT,                -- null until Darius manually shares this entry —
                                               -- never automatic, same pattern as documents.shared_at
+  -- note (default, a chronological fact) | hearing | deadline — drives the
+  -- "Upcoming" banner on the case list and case page (bench-working.js): any
+  -- hearing/deadline entry whose entry_date hasn't passed yet, soonest
+  -- first. Never inferred: Darius (or an edit of an auto-extracted entry)
+  -- picks this explicitly, the same way source below is never guessed.
+  entry_kind            TEXT NOT NULL DEFAULT 'note',
   source                TEXT NOT NULL DEFAULT 'manual',  -- manual | green-filing-ingest |
                                                           -- upload-ai | upload-unreadable |
                                                           -- upload-ai-failed | upload-too-large-to-analyze
@@ -112,6 +125,25 @@ CREATE TABLE IF NOT EXISTS documents (
   storage_ref   TEXT NOT NULL,
   filed_date    TEXT,
   shared_at     TEXT,                 -- null until Darius manually shares it — never automatic
+  -- The paper-filing lifecycle this document is actually in, tracked
+  -- explicitly rather than inferred from filed_date alone (a document can
+  -- be drafted with no filed_date yet, or filed but not yet served).
+  -- drafted (default) | filed | served. filed_date is the filing date;
+  -- served_at/served_method/served_on/proof_of_service_ref describe
+  -- service specifically — see bench-working.js's markDocumentServed.
+  -- Never legal guidance about what must be filed or served, or when —
+  -- only a record of what Darius has already done.
+  filing_status TEXT NOT NULL DEFAULT 'drafted',
+  served_at     TEXT,
+  served_method TEXT,                 -- mail | personal | sheriff | other
+  served_on     TEXT,                 -- free text: who was served
+  -- Same storage convention as storage_ref/storage_kind above: an R2 key
+  -- if uploaded (bench-data.js's benchBlobKey), never a URL. The proof
+  -- itself — a signed certificate, a mail receipt, a sheriff's return —
+  -- attached to the service record it belongs to, not filed as a second,
+  -- disconnected document.
+  proof_of_service_ref       TEXT,
+  proof_of_service_mime_type TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_documents_case ON documents(case_id);
@@ -158,6 +190,22 @@ CREATE TABLE IF NOT EXISTS entrusted_notes (
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_entrusted_notes_case ON entrusted_notes(case_id);
+
+-- Not case-scoped, not AI-generated, not maintained by anyone but Darius —
+-- a plain list he curates himself (a courthouse self-help center, legal
+-- aid, an advocacy hotline), reachable from /bench/resources on the case
+-- list page. Seeded with exactly one entry: the National Domestic Violence
+-- Hotline (1-800-799-7233 / thehotline.org), verified directly (web
+-- search, 2026) rather than assumed, since a wrong number in a DV safety
+-- context is a real harm — everything else here is his own to add.
+CREATE TABLE IF NOT EXISTS resources (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  phone      TEXT,
+  url        TEXT,
+  notes      TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 
 -- The single universal entrusted login. One active row = one valid access
 -- code; revoking access means setting revoked_at, not deleting history.

@@ -796,3 +796,228 @@ test("a case with no ai_summary yet shows the not-yet-generated state, not a bla
   assert.match(html, /Nothing to summarize yet/);
   assert.match(html, /Refresh summary now/);
 });
+
+// --- Hearings & deadlines ---
+
+test("adding a docket entry as a hearing shows it under Upcoming on the case page, and it regenerates the case summary", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+
+  const { ctx, drain } = stubCtx();
+  const form = new URLSearchParams({ entryDate: "2099-10-15", fact: "Hearing on temporary orders.", entryKind: "hearing" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/entries", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/entries"), ctx,
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.docket_entries[0].entry_kind, "hearing");
+  await drain();
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  const html = await detail.text();
+  assert.match(html, /Upcoming/);
+  assert.match(html, /Hearing on temporary orders\./);
+});
+
+test("a past hearing date never appears under Upcoming", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "2020-01-01", fact: "Old hearing.", entry_kind: "hearing", source: "manual", created_at: "t", updated_at: "t" });
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  const html = await detail.text();
+  assert.doesNotMatch(html, /class="card upcoming"/);
+});
+
+test("the case list shows each case's soonest upcoming hearing/deadline as a tag", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "2099-11-01", fact: "Later deadline.", entry_kind: "deadline", source: "manual", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e2", case_id: "case-1", case_label: "X", entry_date: "2099-10-15", fact: "Sooner hearing.", entry_kind: "hearing", source: "manual", created_at: "t", updated_at: "t" });
+
+  const list = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  const html = await list.text();
+  assert.match(html, /hearing 2099-10-15/);
+});
+
+test("editing an entry's kind is honored, and correcting a hearing back to a plain note removes it from Upcoming", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "2099-10-15", fact: "Maybe a hearing?", entry_kind: "hearing", source: "manual", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ fact: "Turned out to be nothing.", entryKind: "note" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/entries/e1/edit", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/entries/e1/edit"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.docket_entries[0].entry_kind, "note");
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  assert.doesNotMatch(await detail.text(), /Upcoming/);
+});
+
+// --- Filing & service ---
+
+test("a document defaults to drafted, can be marked filed, then served with a proof-of-service upload", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, filing_status: "drafted", created_at: "t" });
+
+  const fileForm = new URLSearchParams({ filedDate: "2026-09-15" });
+  const fileRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/file", token, { method: "POST", body: fileForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/file"),
+  );
+  assert.equal(fileRes.status, 303);
+  assert.equal(fakeD1.tables.documents[0].filing_status, "filed");
+  assert.equal(fakeD1.tables.documents[0].filed_date, "2026-09-15");
+
+  const { blobId, filename, contentType } = await putBlob(env, token, "receipt.pdf", "application/pdf", "mail receipt bytes");
+  const serveForm = new URLSearchParams({ servedAt: "2026-09-20", servedMethod: "mail", servedOn: "Respondent, Jane Doe", blobId, filename, contentType });
+  const serveRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/serve", token, { method: "POST", body: serveForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/serve"),
+  );
+  assert.equal(serveRes.status, 303);
+  const doc = fakeD1.tables.documents[0];
+  assert.equal(doc.filing_status, "served");
+  assert.equal(doc.served_method, "mail");
+  assert.equal(doc.served_on, "Respondent, Jane Doe");
+  assert.ok(doc.proof_of_service_ref);
+
+  const proofRes = await handleBenchGet(
+    authedRequest(`https://darius.life/bench/documents/doc-1/proof-of-service/file`, token),
+    env, new URL(`https://darius.life/bench/documents/doc-1/proof-of-service/file`),
+  );
+  assert.equal(proofRes.status, 200);
+  assert.equal(await proofRes.text(), "mail receipt bytes");
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-1", token), env, new URL("https://darius.life/bench/documents/doc-1"));
+  const html = await detail.text();
+  assert.match(html, /Served 2026-09-20/);
+  assert.match(html, /Open proof of service/);
+});
+
+test("marking served without a proof-of-service upload still works — the upload is optional", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, filing_status: "filed", filed_date: "2026-09-15", created_at: "t" });
+
+  const form = new URLSearchParams({ servedAt: "2026-09-20", servedMethod: "personal" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/serve", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/serve"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.documents[0].filing_status, "served");
+  assert.equal(fakeD1.tables.documents[0].proof_of_service_ref, null);
+});
+
+test("adding a document with a filedDate up front shows it already filed, not drafted", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ docTitle: "Response", storageRef: "https://example.com/response.pdf", filedDate: "2026-09-01" });
+  await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents"),
+  );
+  assert.equal(fakeD1.tables.documents[0].filing_status, "filed");
+});
+
+test("the filing packet lists every document and its status, and is reachable from the case page", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, filing_status: "served", served_at: "2026-09-20", created_at: "t" });
+
+  const caseDetail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  assert.match(await caseDetail.text(), /Filing packet/);
+
+  const packet = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1/packet", token), env, new URL("https://darius.life/bench/case/case-1/packet"));
+  assert.equal(packet.status, 200);
+  const html = await packet.text();
+  assert.match(html, /Motion\.pdf/);
+  assert.match(html, /served 2026-09-20/);
+});
+
+// --- Local rules & procedure notes ---
+
+test("saving local rules notes stores Darius's own words and never triggers a case summary regeneration", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { response: "should not be called" }; } };
+
+  const { ctx, drain } = stubCtx();
+  const form = new URLSearchParams({ notes: "Self-help center says: 3 copies, one for the clerk." });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/local-rules", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/local-rules"), ctx,
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.cases[0].local_rules_notes, "Self-help center says: 3 copies, one for the clerk.");
+  await drain();
+  assert.equal(calls, 0);
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/case/case-1", token), env, new URL("https://darius.life/bench/case/case-1"));
+  assert.match(await detail.text(), /3 copies, one for the clerk\./);
+});
+
+// --- Resources ---
+
+test("GET /bench/resources lists resources, including the one seeded default", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.resources.push({ id: "res-1", name: "National Domestic Violence Hotline", phone: "1-800-799-7233", url: "https://www.thehotline.org", notes: "24/7", created_at: "t" });
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/resources", token), env, new URL("https://darius.life/bench/resources"));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /National Domestic Violence Hotline/);
+  assert.match(html, /1-800-799-7233/);
+});
+
+test("adding and deleting a resource works, and the case list links to the resources page", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+
+  const addForm = new URLSearchParams({ name: "County self-help center", phone: "555-0100" });
+  const addRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/resources", token, { method: "POST", body: addForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/resources"),
+  );
+  assert.equal(addRes.status, 303);
+  assert.equal(fakeD1.tables.resources.length, 1);
+  const resourceId = fakeD1.tables.resources[0].id;
+
+  const list = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  assert.match(await list.text(), /bench\/resources/);
+
+  const deleteRes = await handleBenchPost(
+    authedRequest(`https://darius.life/bench/resources/${resourceId}/delete`, token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL(`https://darius.life/bench/resources/${resourceId}/delete`),
+  );
+  assert.equal(deleteRes.status, 303);
+  assert.equal(fakeD1.tables.resources.length, 0);
+});
+
+test("adding a resource without a name is rejected and writes nothing", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  const form = new URLSearchParams({ phone: "555-0100" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/resources", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/resources"),
+  );
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.resources.length, 0);
+});

@@ -88,3 +88,35 @@ test("a recording with no typed body and no transcript yet (transcription still 
   await summarizeCase({ AI: fakeAI }, record);
   assert.doesNotMatch(sentPrompt, /Voice notes/);
 });
+
+test("a hearing/deadline entry is tagged explicitly in the prompt, distinct from an ordinary note", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({
+    entries: [
+      { entry_date: "2026-10-15", fact: "Hearing on temporary orders.", entry_kind: "hearing", recommended_direction: null, commentary: null, court_takeaways: null },
+      { entry_date: "2026-10-01", fact: "Response due.", entry_kind: "deadline", recommended_direction: null, commentary: null, court_takeaways: null },
+      { entry_date: "2026-09-20", fact: "Filed initial petition.", entry_kind: "note", recommended_direction: null, commentary: null, court_takeaways: null },
+    ],
+  });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.match(sentPrompt, /2026-10-15 \[HEARING\]: Hearing on temporary orders\./);
+  assert.match(sentPrompt, /2026-10-01 \[DEADLINE\]: Response due\./);
+  assert.match(sentPrompt, /2026-09-20: Filed initial petition\./);
+});
+
+test("a document's filing/service status is stated exactly as given, never implied beyond it", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({
+    documents: [
+      { title: "Motion.pdf", filing_status: "drafted" },
+      { title: "Response.pdf", filing_status: "filed", filed_date: "2026-09-15" },
+      { title: "Notice.pdf", filing_status: "served", served_at: "2026-09-20" },
+    ],
+  });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.match(sentPrompt, /Motion\.pdf \(drafted, not yet filed\)/);
+  assert.match(sentPrompt, /Response\.pdf \(filed 2026-09-15\)/);
+  assert.match(sentPrompt, /Notice\.pdf \(served 2026-09-20\)/);
+});

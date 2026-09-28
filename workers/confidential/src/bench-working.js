@@ -53,6 +53,8 @@ const UPLOAD_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-sr
 // absurd cheaply, at head() time, not to promise any particular ceiling.
 const MAX_STORABLE_BYTES = 2 * 1024 * 1024 * 1024;
 
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 const forbidden = () => new Response("Forbidden", { status: 403, headers: headers("text/plain; charset=utf-8") });
 const notFound = () => new Response("Not Found", { status: 404, headers: headers("text/plain; charset=utf-8") });
 const html = (body, status = 200) => new Response(body, { status, headers: headers("text/html; charset=utf-8") });
@@ -70,6 +72,7 @@ const listCases = (env) => data.listCases(env.BENCH_NOTES);
 const getCase = (env, id) => data.getCase(env.BENCH_NOTES, id);
 const createCase = (env, fields) => data.createCase(env.BENCH_NOTES, fields);
 const listEntries = (env, caseId) => data.listEntries(env.BENCH_NOTES, caseId);
+const listUpcomingEntries = (env) => data.listUpcomingEntries(env.BENCH_NOTES);
 const addEntry = (env, fields) => data.addEntry(env.BENCH_NOTES, fields);
 const setEntryShared = (env, id, shared) => data.setEntryShared(env.BENCH_NOTES, id, shared);
 const updateEntry = (env, id, fields) => data.updateEntry(env.BENCH_NOTES, id, fields);
@@ -80,6 +83,12 @@ const addPattern = (env, fields) => data.addPattern(env.BENCH_NOTES, fields);
 const listDocuments = (env, caseId) => data.listDocuments(env.BENCH_NOTES, caseId);
 const addDocument = (env, fields) => data.addDocument(env.BENCH_NOTES, fields);
 const setDocumentShared = (env, id, shared) => data.setDocumentShared(env.BENCH_NOTES, id, shared);
+const markDocumentFiled = (env, id, filedDate) => data.markDocumentFiled(env.BENCH_NOTES, id, filedDate);
+const markDocumentServed = (env, id, fields) => data.markDocumentServed(env.BENCH_NOTES, id, fields);
+const updateCaseLocalRules = (env, caseId, notes) => data.updateCaseLocalRules(env.BENCH_NOTES, caseId, notes);
+const listResources = (env) => data.listResources(env.BENCH_NOTES);
+const addResource = (env, fields) => data.addResource(env.BENCH_NOTES, fields);
+const deleteResource = (env, id) => data.deleteResource(env.BENCH_NOTES, id);
 const listEntrustedNotes = (env, caseId) => data.listEntrustedNotes(env.BENCH_NOTES, caseId);
 const listDocumentRecordings = (env, documentId) => data.listDocumentRecordings(env.BENCH_NOTES, documentId);
 const listCaseRecordings = (env, caseId) => data.listCaseRecordings(env.BENCH_NOTES, caseId);
@@ -215,9 +224,13 @@ function blobUploadFields() {
 <p data-upload-status class="hint" style="display:none"></p>`;
 }
 
-function renderCaseList(cases, grants, grantSummaries) {
+function renderCaseList(cases, grants, grantSummaries, upcomingByCase) {
   const rows = cases.length
-    ? cases.map((c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`).join("\n")
+    ? cases.map((c) => {
+        const upcoming = upcomingByCase?.get(c.id);
+        const upcomingTag = upcoming ? ` · <span class="status">${escapeHtml(upcoming.entry_kind)} ${escapeHtml(upcoming.entry_date)}</span>` : "";
+        return `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}${upcomingTag}</span></div>`;
+      }).join("\n")
     : `<p class="hint">No cases yet — upload a document below, or add one the long way further down.</p>`;
   const grantRows = grants.length ? grants.map((g) => renderGrantRow(g, grantSummaries.get(g.id))).join("\n") : `<p class="hint">No entrusted access granted yet.</p>`;
   const caseCheckboxes = cases.map((c) => `<label class="opt"><input type="checkbox" name="caseIds" value="${escapeHtml(c.id)}"> ${escapeHtml(c.title)}</label>`).join("\n");
@@ -226,6 +239,7 @@ function renderCaseList(cases, grants, grantSummaries) {
     "Bench Notes",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Working docket — private</span></h1></header>
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
+<p class="note"><a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a></p>
 
 <h2>Upload a document</h2>
 <p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional. Large files upload directly with a progress bar, so a big scan won't hang or crash the page.</p>
@@ -271,6 +285,22 @@ ${grantRows}
   );
 }
 
+// note (a chronological fact, the default) | hearing | deadline — never
+// inferred, same explicit-or-default rule as source below. hearing/deadline
+// entries whose date hasn't passed yet drive renderUpcoming's banner.
+const ENTRY_KINDS = [
+  { value: "note", label: "Note" },
+  { value: "hearing", label: "Hearing" },
+  { value: "deadline", label: "Deadline" },
+];
+function entryKindSelect(id, selected) {
+  const options = ENTRY_KINDS.map((k) => `<option value="${k.value}"${k.value === (selected || "note") ? " selected" : ""}>${k.label}</option>`).join("\n");
+  return `<label for="${id}">Kind</label>
+<select id="${id}" name="entryKind">
+${options}
+</select>`;
+}
+
 function renderEntry(base, e, attachedDocs) {
   const layer = (name, value) => (value ? `<div class="entry-layer"><span class="layer-name">${name}</span>${escapeHtml(value)}</div>` : "");
   const shared = Boolean(e.shared_at);
@@ -280,8 +310,9 @@ function renderEntry(base, e, attachedDocs) {
   // read on its own) is tagged, visibly, every time it's shown — never
   // presented as indistinguishable from his own fact.
   const autoTag = e.source && e.source !== "manual" ? `<span class="status">auto-extracted</span>` : "";
+  const kindTag = e.entry_kind && e.entry_kind !== "note" ? `<span class="status">${escapeHtml(e.entry_kind)}</span>` : "";
   return `<div class="card">
-<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${autoTag}${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
+<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${kindTag}${autoTag}${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
 <div class="entry-layer"><span class="layer-name">Fact</span>${escapeHtml(e.fact)}</div>
 ${layer("Recommended direction", e.recommended_direction)}
 ${layer("Commentary", e.commentary)}
@@ -292,6 +323,7 @@ ${attachedDocs.length ? attachedDocs.map((d) => renderDocumentRow(base, d)).join
 <form method="post" action="${editAction}">
 <label for="fact-${escapeHtml(e.id)}">Fact</label>
 <textarea id="fact-${escapeHtml(e.id)}" name="fact" required>${escapeHtml(e.fact)}</textarea>
+${entryKindSelect(`entryKind-${escapeHtml(e.id)}`, e.entry_kind)}
 <label for="recommendedDirection-${escapeHtml(e.id)}">Recommended direction (optional)</label>
 <textarea id="recommendedDirection-${escapeHtml(e.id)}" name="recommendedDirection">${escapeHtml(e.recommended_direction || "")}</textarea>
 <label for="commentary-${escapeHtml(e.id)}">Commentary (optional)</label>
@@ -302,6 +334,22 @@ ${attachedDocs.length ? attachedDocs.map((d) => renderDocumentRow(base, d)).join
 </form>
 </details>
 <form method="post" action="${base}/entries/${escapeHtml(e.id)}/delete"><button type="submit">Delete entry</button></form>
+</div>`;
+}
+
+// The one place a hearing/deadline actually becomes visible as something
+// to act on, rather than just another timeline row — every hearing/deadline
+// entry across the record whose own date hasn't passed yet, soonest first.
+// Never a calculated deadline: only what Darius (or an edit) has already
+// tagged as one, on a date he already entered.
+function renderUpcoming(entries) {
+  const today = todayStr();
+  const upcoming = entries
+    .filter((e) => e.entry_kind && e.entry_kind !== "note" && e.entry_date >= today)
+    .sort((a, b) => (a.entry_date < b.entry_date ? -1 : a.entry_date > b.entry_date ? 1 : 0));
+  if (!upcoming.length) return "";
+  return `<div class="card upcoming"><strong>Upcoming</strong>
+${upcoming.map((e) => `<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)} · ${escapeHtml(e.entry_kind)}</span><span>${escapeHtml(truncate(e.fact, 60))}</span></div>`).join("\n")}
 </div>`;
 }
 
@@ -317,12 +365,28 @@ function documentOwnerHref(d) {
   return d.storage_kind === "upload" ? `${PREFIX}documents/${d.id}/file` : d.storage_ref;
 }
 
+// drafted (default) | filed | served — a record of what Darius has done
+// with this document, never guidance about what he must do or when. The
+// richer "mark served" form (method, who, proof of service) lives on the
+// document's own detail page; this row only offers the one-field "mark
+// filed" quick action, since that's all filing needs before service can
+// even be recorded.
+function filingStatusLabel(d) {
+  if (d.filing_status === "served") return `served${d.served_at ? ` ${escapeHtml(d.served_at)}` : ""}`;
+  if (d.filing_status === "filed") return `filed${d.filed_date ? ` ${escapeHtml(d.filed_date)}` : ""}`;
+  return "drafted";
+}
+
 function renderDocumentRow(base, d) {
   const shared = Boolean(d.shared_at);
   const toggleAction = `${base}/documents/${escapeHtml(d.id)}/${shared ? "unshare" : "share"}`;
   const deleteAction = `${base}/documents/${escapeHtml(d.id)}/delete`;
+  const fileAction = `${base}/documents/${escapeHtml(d.id)}/file`;
   const detailHref = `${PREFIX}documents/${escapeHtml(d.id)}`;
-  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""} · <a href="${detailHref}">notes &amp; recordings</a></span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form> · <form style="display:inline" method="post" action="${deleteAction}"><button type="submit">Delete</button></form></span></div>`;
+  const markFiledForm = d.filing_status === "drafted"
+    ? `<form style="display:inline" method="post" action="${fileAction}"><input type="date" name="filedDate" value="${todayStr()}" style="display:inline;width:auto;margin:0"> <button type="submit">Mark filed</button></form> · `
+    : "";
+  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a> · <a href="${detailHref}">notes, recordings &amp; service</a></span><span class="status">${filingStatusLabel(d)} · ${markFiledForm}${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form> · <form style="display:inline" method="post" action="${deleteAction}"><button type="submit">Delete</button></form></span></div>`;
 }
 
 function renderNoteRow(n) {
@@ -380,18 +444,68 @@ ${renderTranscript(base, r)}
 </div>`;
 }
 
+// Filing/service is a record of what Darius has actually done, never a
+// deadline or requirement Bench Notes calculates for him — see the
+// schema's own comment on documents.filing_status. Three states, each
+// showing only the next action that makes sense: mark filed, then mark
+// served (with an optional proof-of-service upload — the same streaming
+// blob-PUT flow recordings already use), then just the record of both.
+function renderFilingSection(base, doc) {
+  const fileAction = `${base}/documents/${escapeHtml(doc.id)}/file`;
+  const serveAction = `${base}/documents/${escapeHtml(doc.id)}/serve`;
+  const proofHref = `${PREFIX}documents/${escapeHtml(doc.id)}/proof-of-service/file`;
+
+  if (doc.filing_status === "drafted") {
+    return `<h2>Filing &amp; service</h2>
+<p class="hint">Not yet marked filed. This only records what you've done — never a deadline or requirement calculated for you.</p>
+<form method="post" action="${fileAction}">
+<label for="filedDate">Date filed</label>
+<input type="date" id="filedDate" name="filedDate" value="${todayStr()}" required>
+<button type="submit">Mark filed</button>
+</form>`;
+  }
+
+  if (doc.filing_status === "filed") {
+    return `<h2>Filing &amp; service</h2>
+<p class="hint">Filed ${escapeHtml(doc.filed_date || "")}. Not yet marked served.</p>
+<form method="post" action="${serveAction}" data-blob-upload>
+<label for="servedAt">Date served</label>
+<input type="date" id="servedAt" name="servedAt" value="${todayStr()}" required>
+<label for="servedMethod">How</label>
+<select id="servedMethod" name="servedMethod">
+<option value="mail">Mail</option>
+<option value="personal">Personal service</option>
+<option value="sheriff">Sheriff / process server</option>
+<option value="other">Other</option>
+</select>
+<label for="servedOn">Who was served (optional)</label>
+<input type="text" id="servedOn" name="servedOn" placeholder="e.g. Respondent, Jane Doe">
+<label for="proofFile">Proof of service (optional — a receipt, a signed certificate, a sheriff's return)</label>
+<input type="file" id="proofFile" data-blob-file>
+${blobUploadFields()}
+<button type="submit">Mark served</button>
+</form>`;
+  }
+
+  return `<h2>Filing &amp; service</h2>
+<p class="hint">Filed ${escapeHtml(doc.filed_date || "")}. Served ${escapeHtml(doc.served_at || "")}${doc.served_method ? ` by ${escapeHtml(doc.served_method)}` : ""}${doc.served_on ? `, on ${escapeHtml(doc.served_on)}` : ""}.</p>
+${doc.proof_of_service_ref ? `<p class="hint"><a href="${proofHref}">Open proof of service</a></p>` : `<p class="hint">No proof of service on file.</p>`}`;
+}
+
 // A document's own page — where "record or upload multiple recordings per
 // document, at different points in time" actually lives, rather than
 // crowding the already form-dense case page with it. Reachable from the
-// case page's "notes & recordings" link next to each document.
+// case page's "notes, recordings & service" link next to each document.
 function renderDocumentDetail(caseRow, doc, recordings) {
   const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   return benchPage(
     doc.title,
     `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(doc.title)}<span class="tag">${escapeHtml(caseRow.title)}</span></h1></header>
 <p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a></p>
-<p class="hint"><a href="${escapeHtml(documentOwnerHref(doc))}">Open the document itself</a>${doc.filed_date ? ` — filed ${escapeHtml(doc.filed_date)}` : ""}</p>
+<p class="hint"><a href="${escapeHtml(documentOwnerHref(doc))}">Open the document itself</a></p>
+
+${renderFilingSection(base, doc)}
 
 <h2>Notes &amp; recordings</h2>
 <p class="hint">Your own thinking about this document, dated, as many as you like, added whenever something changes — never shared, never entrusted-visible.</p>
@@ -433,9 +547,11 @@ function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes
   return benchPage(
     caseRow.title,
     `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">${escapeHtml(caseRow.status)}${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
-<p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a> · <a href="${base}/packet">Filing packet (print/export) &rarr;</a></p>
 
 ${renderCaseSummary(base, caseRow)}
+
+${renderUpcoming(entries)}
 
 <h2>Timeline</h2>
 <p class="hint">Chronological, dated. Each entry can be shared to the entrusted side on its own — sharing shows only the date and the fact, never your recommended direction, commentary, or court takeaways.</p>
@@ -447,6 +563,7 @@ ${entries.length ? `<div class="spine">${entries.map((e) => renderEntry(base, e,
 <input type="date" id="entryDate" name="entryDate" required>
 <label for="fact">Fact — what happened</label>
 <textarea id="fact" name="fact" required></textarea>
+${entryKindSelect("entryKind", "note")}
 <label for="recommendedDirection">Recommended direction (optional)</label>
 <textarea id="recommendedDirection" name="recommendedDirection"></textarea>
 <label for="commentary">Commentary (optional)</label>
@@ -509,12 +626,67 @@ ${patterns.length ? patterns.map(renderPattern).join("\n") : `<p class="hint">No
 <button type="submit">Flag pattern</button>
 </form>
 
+<h2>This court's rules &amp; procedure notes</h2>
+<p class="hint">Your own words, from your own court's clerk, self-help center, or local rules — never generated by Bench Notes, and never guidance about what's actually required. A place to keep it in one spot.</p>
+${caseRow.local_rules_notes ? `<div class="card" style="white-space:pre-wrap">${escapeHtml(caseRow.local_rules_notes)}</div>` : `<p class="hint">Nothing saved yet.</p>`}
+<form method="post" action="${base}/local-rules">
+<textarea name="notes" placeholder="Paste or type what you've learned about this court's own requirements...">${escapeHtml(caseRow.local_rules_notes || "")}</textarea>
+<button type="submit">Save</button>
+</form>
+
 <h2>Delete this case</h2>
 <p class="hint">Removes the case and everything under it — every timeline entry, every document and its recordings — permanently. Type the case title exactly to confirm.</p>
 <form method="post" action="${base}/delete">
 <label for="confirmTitle">Case title</label>
 <input type="text" id="confirmTitle" name="confirmTitle" placeholder="${escapeHtml(caseRow.title)}" required>
 <button type="submit">Delete case</button>
+</form>`,
+  );
+}
+
+// A printable index, not a real merged PDF — deliberately: merging the
+// documents' own PDF bytes in-Worker would reintroduce the same kind of
+// CPU-bound work bench-document-ai.js's own header explains moving off
+// this Worker's CPU entirely (see "Runs entirely on the Workers Free
+// plan" in README.md). A browser's own Print-to-PDF (Ctrl/Cmd+P), on this
+// plain page, costs this Worker nothing and needs no library at all.
+function renderFilingPacket(caseRow, documents) {
+  const rows = documents.length
+    ? documents.map((d) => `<div class="case-row"><span>${escapeHtml(d.title)}</span><span class="status">${filingStatusLabel(d)}</span></div>`).join("\n")
+    : `<p class="hint">No documents on file yet.</p>`;
+  return benchPage(
+    `Filing packet — ${caseRow.title}`,
+    `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">Filing packet${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
+<p class="note"><a href="${PREFIX}case/${escapeHtml(caseRow.id)}">&larr; Back to ${escapeHtml(caseRow.title)}</a> — use your browser's own Print (Ctrl/Cmd+P) to save this as a PDF.</p>
+<h2>Documents</h2>
+${rows}`,
+  );
+}
+
+// Not case-scoped, not AI-generated, not maintained by anyone but Darius —
+// see schema/bench-notes.sql's own comment on the resources table for why
+// exactly one entry is seeded rather than assumed.
+function renderResources(resources) {
+  const rows = resources.length
+    ? resources.map((r) => `<div class="card"><strong>${escapeHtml(r.name)}</strong>${r.phone ? ` · ${escapeHtml(r.phone)}` : ""}${r.url ? ` · <a href="${escapeHtml(r.url)}">${escapeHtml(r.url)}</a>` : ""}${r.notes ? `<div class="hint">${escapeHtml(r.notes)}</div>` : ""}<form method="post" action="${PREFIX}resources/${escapeHtml(r.id)}/delete"><button type="submit">Delete</button></form></div>`).join("\n")
+    : `<p class="hint">Nothing added yet.</p>`;
+  return benchPage(
+    "Resources",
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>Resources<span class="tag">Your own list</span></h1></header>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+<p class="hint">A place for your own courthouse self-help center, legal aid, and advocacy contacts. Nothing here is written by Bench Notes itself, except the one seeded entry below — checked directly (a web search, not assumed) before being added, since a wrong number in a safety context is a real harm. Everything else is yours to add.</p>
+${rows}
+<h3>Add one</h3>
+<form method="post" action="${PREFIX}resources">
+<label for="resName">Name</label>
+<input type="text" id="resName" name="name" required>
+<label for="resPhone">Phone (optional)</label>
+<input type="text" id="resPhone" name="phone">
+<label for="resUrl">Link (optional)</label>
+<input type="text" id="resUrl" name="url">
+<label for="resNotes">Notes (optional)</label>
+<textarea id="resNotes" name="notes"></textarea>
+<button type="submit">Add</button>
 </form>`,
   );
 }
@@ -528,7 +700,7 @@ export async function handleBenchGet(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
   try {
     if (path === "") {
-      const [cases, grants] = await Promise.all([listCases(env), listGrants(env)]);
+      const [cases, grants, upcomingEntries] = await Promise.all([listCases(env), listGrants(env), listUpcomingEntries(env)]);
       const caseTitleById = new Map(cases.map((c) => [c.id, c.title]));
       const grantSummaries = new Map();
       await Promise.all(
@@ -545,7 +717,21 @@ export async function handleBenchGet(request, env, url) {
           });
         }),
       );
-      return html(renderCaseList(cases, grants, grantSummaries));
+      // listUpcomingEntries already sorts entry_date ascending, so the
+      // first one seen per case is the soonest — but "upcoming" still
+      // means the date hasn't passed, which is a comparison test-fake-d1.mjs
+      // doesn't model, so it's applied here rather than in the query.
+      const today = todayStr();
+      const upcomingByCase = new Map();
+      for (const e of upcomingEntries) {
+        if (e.entry_date < today) continue;
+        if (!upcomingByCase.has(e.case_id)) upcomingByCase.set(e.case_id, e);
+      }
+      return html(renderCaseList(cases, grants, grantSummaries, upcomingByCase));
+    }
+
+    if (path === "resources") {
+      return html(renderResources(await listResources(env)));
     }
 
     const previewMatch = path.match(/^preview\/([^/]+)$/);
@@ -581,6 +767,14 @@ export async function handleBenchGet(request, env, url) {
       return html(renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes));
     }
 
+    const packetMatch = path.match(/^case\/([^/]+)\/packet$/);
+    if (packetMatch) {
+      const caseRow = await getCase(env, packetMatch[1]);
+      if (!caseRow) return notFound();
+      const documents = await listDocuments(env, caseRow.id);
+      return html(renderFilingPacket(caseRow, documents));
+    }
+
     const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
     if (fileMatch) {
       const doc = await data.getDocument(env.BENCH_NOTES, fileMatch[1]);
@@ -591,6 +785,20 @@ export async function handleBenchGet(request, env, url) {
         headers: {
           "content-type": object.httpMetadata?.contentType || "application/octet-stream",
           "content-disposition": `inline; filename="${doc.title.replace(/"/g, "")}"`,
+          "cache-control": "private, no-store",
+        },
+      });
+    }
+
+    const proofFileMatch = path.match(/^documents\/([^/]+)\/proof-of-service\/file$/);
+    if (proofFileMatch) {
+      const doc = await data.getDocument(env.BENCH_NOTES, proofFileMatch[1]);
+      if (!doc || !doc.proof_of_service_ref) return notFound();
+      const object = await env.BENCH_DOCUMENTS.get(doc.proof_of_service_ref);
+      if (!object) return notFound();
+      return new Response(object.body, {
+        headers: {
+          "content-type": doc.proof_of_service_mime_type || "application/octet-stream",
           "cache-control": "private, no-store",
         },
       });
@@ -749,6 +957,7 @@ export async function handleBenchPost(request, env, url, ctx) {
         recommendedDirection: form.get("recommendedDirection"),
         commentary: form.get("commentary"),
         courtTakeaways: form.get("courtTakeaways"),
+        entryKind: form.get("entryKind"),
       });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
@@ -777,6 +986,7 @@ export async function handleBenchPost(request, env, url, ctx) {
         commentary: form.get("commentary"),
         courtTakeaways: form.get("courtTakeaways"),
         source: "manual",
+        entryKind: form.get("entryKind"),
       });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
@@ -848,6 +1058,54 @@ export async function handleBenchPost(request, env, url, ctx) {
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
+    // A record of what Darius has done, never a deadline calculated for
+    // him — see documents.filing_status's own schema comment. Reachable
+    // both as a quick action on the case page and from the document's own
+    // Filing & service section.
+    const documentFileMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/file$/);
+    if (documentFileMatch) {
+      const [, caseId, docId] = documentFileMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
+      await markDocumentFiled(env, docId, form.get("filedDate"));
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
+      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+    }
+
+    // One step past filed — who was served, how, when, and an optional
+    // proof of service, uploaded the same streaming blob-PUT way as any
+    // other file here (see handleBenchPut). The blob, if any, has already
+    // finished uploading (checked via R2's own head(), no bytes fetched)
+    // before this ever runs, same pattern as every other upload path.
+    const documentServeMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/serve$/);
+    if (documentServeMatch) {
+      const [, caseId, docId] = documentServeMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
+      const servedAt = form.get("servedAt");
+      if (!servedAt) return html(errorPage("Say when this was served."), 400);
+      const blobId = form.get("blobId");
+      const filename = form.get("filename");
+      let proofOfServiceRef = null;
+      let proofOfServiceMimeType = null;
+      if (blobId && filename) {
+        const key = data.benchBlobKey(blobId, filename);
+        const head = await env.BENCH_DOCUMENTS.head(key);
+        if (!head) return html(errorPage("That proof of service didn't finish uploading — try again."), 400);
+        proofOfServiceRef = key;
+        proofOfServiceMimeType = form.get("contentType") || "application/octet-stream";
+      }
+      await markDocumentServed(env, docId, {
+        servedAt,
+        servedMethod: form.get("servedMethod"),
+        servedOn: form.get("servedOn"),
+        proofOfServiceRef,
+        proofOfServiceMimeType,
+      });
+      regenerateCaseSummaryInBackground(env, ctx, caseId);
+      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+    }
+
     const recordingDeleteMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings\/([^/]+)\/delete$/);
     if (recordingDeleteMatch) {
       const [, caseId, docId, recordingId] = recordingDeleteMatch;
@@ -869,6 +1127,18 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (confirmTitle !== caseRow.title) return html(errorPage(`That doesn't match the case title exactly ("${caseRow.title}") — nothing was deleted.`), 400);
       await deleteCaseAndBlobs(env, caseId);
       return Response.redirect(`https://darius.life${PREFIX}`, 303);
+    }
+
+    // Darius's own reference notes, never AI-generated and never fed into
+    // the case summary's prompt — see cases.local_rules_notes's own schema
+    // comment for why that separation matters. No regeneration triggered:
+    // this isn't a fact about the case, just his own procedural notes.
+    const localRulesMatch = path.match(/^case\/([^/]+)\/local-rules$/);
+    if (localRulesMatch) {
+      const caseId = localRulesMatch[1];
+      if (!(await getCase(env, caseId))) return notFound();
+      await updateCaseLocalRules(env, caseId, form.get("notes"));
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
     // A deliberate action Darius is waiting on, unlike every other
@@ -972,6 +1242,19 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!newPassphrase || newPassphrase.length < 6) return html(errorPage("Passphrase must be at least 6 characters."), 400);
       await updateGrantPassphrase(env, passphraseMatch[1], await sha256Hex(newPassphrase));
       return Response.redirect(`https://darius.life${PREFIX}`, 303);
+    }
+
+    if (path === "resources") {
+      const name = form.get("name");
+      if (!name) return html(errorPage("A resource needs a name."), 400);
+      await addResource(env, { id: crypto.randomUUID(), name, phone: form.get("phone"), url: form.get("url"), notes: form.get("notes") });
+      return Response.redirect(`https://darius.life${PREFIX}resources`, 303);
+    }
+
+    const resourceDeleteMatch = path.match(/^resources\/([^/]+)\/delete$/);
+    if (resourceDeleteMatch) {
+      await deleteResource(env, resourceDeleteMatch[1]);
+      return Response.redirect(`https://darius.life${PREFIX}resources`, 303);
     }
 
     return notFound();
