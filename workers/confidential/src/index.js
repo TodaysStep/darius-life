@@ -9,7 +9,7 @@
 // docket). The entrusted side is deliberately NOT here — see
 // workers/private-legal/src/bench-entrusted.js's own header for why it
 // cannot live behind this same gate.
-import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost } from "./bench-working.js";
+import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
 
 export default {
   async fetch(request, env) {
@@ -18,6 +18,11 @@ export default {
     if (url.pathname.startsWith(BENCH_PREFIX)) {
       if (request.method === "GET") return handleBenchGet(request, env, url);
       if (request.method === "POST") return handleBenchPost(request, env, url);
+      // PUT streams a blob's raw bytes straight to R2 (see bench-working.js's
+      // own header) — deliberately not a POST, so the body is never the
+      // multipart/form-data request.formData() would otherwise have to
+      // buffer whole into the Worker's own 128 MB memory ceiling.
+      if (request.method === "PUT") return handleBenchPut(request, env, url);
       return new Response("Method Not Allowed", { status: 405 });
     }
 

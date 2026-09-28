@@ -15,13 +15,25 @@
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const MAX_PROMPT_CHARS = 8000;
 
-export async function extractPdfText(file) {
-  const isPdf = (file.type || "").includes("pdf") || file.name.toLowerCase().endsWith(".pdf");
+// Above this, analysis is skipped entirely rather than attempted — pdf.js
+// needs to hold a parsed document in memory to read it, on top of whatever
+// holding the bytes themselves costs, and a Worker isolate has a hard
+// 128 MB ceiling (not per-request — shared, and unforgiving: exceeding it
+// gets the whole in-flight request killed, not a catchable error). This
+// threshold is deliberately well under that ceiling, not tuned to it.
+export const MAX_ANALYZABLE_BYTES = 20 * 1024 * 1024;
+
+// Takes bytes directly (an ArrayBuffer already read from R2 or elsewhere),
+// never a File — callers are responsible for deciding whether reading that
+// many bytes into memory at all is safe (see MAX_ANALYZABLE_BYTES and how
+// the upload finalize route uses it, checking R2's own object size first
+// via head(), before ever fetching the bytes).
+export async function extractPdfText(bytes, filename, contentType) {
+  const isPdf = (contentType || "").includes("pdf") || filename.toLowerCase().endsWith(".pdf");
   if (!isPdf) return "";
   try {
     const { getDocumentProxy, extractText } = await import("unpdf");
-    const buffer = await file.arrayBuffer();
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
     const { text } = await extractText(pdf, { mergePages: true });
     return (text || "").trim();
   } catch {
@@ -89,7 +101,19 @@ export async function classifyDocumentText(env, text, filename) {
   }
 }
 
-export async function analyzeUploadedDocument(env, file) {
-  const text = await extractPdfText(file);
-  return classifyDocumentText(env, text, file.name);
+// size is the object's size as R2 already reports it (head(), no bytes
+// fetched yet) — analysis is skipped, honestly and cheaply, before ever
+// reading a byte, for anything over MAX_ANALYZABLE_BYTES. fetchBytes is
+// called only once that decision says it's safe to.
+export async function analyzeUploadedDocument(env, filename, contentType, size, fetchBytes) {
+  if (size > MAX_ANALYZABLE_BYTES) {
+    return {
+      fact: `Document uploaded: ${filename}. Too large to read automatically (over ${Math.floor(MAX_ANALYZABLE_BYTES / (1024 * 1024))} MB) — add your own notes on the case page.`,
+      caseNumber: null,
+      source: "upload-too-large-to-analyze",
+    };
+  }
+  const bytes = await fetchBytes();
+  const text = await extractPdfText(bytes, filename, contentType);
+  return classifyDocumentText(env, text, filename);
 }

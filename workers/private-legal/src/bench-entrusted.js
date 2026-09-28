@@ -65,7 +65,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 
 // storage_kind "upload" documents are served from this Worker's own R2
 // binding (PRIVATE_LEGAL — the same bucket the working side uses, under
-// workers/shared/bench-data.js's documentObjectKey), never from
+// workers/shared/bench-data.js's benchBlobKey), never from
 // storage_ref directly, which for an upload is an internal R2 key, not a URL.
 function documentGuestHref(d) {
   return `${PREFIX}documents/${d.id}/file`;

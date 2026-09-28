@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyDocumentText, extractPdfText } from "./bench-document-ai.js";
+import { MAX_ANALYZABLE_BYTES, analyzeUploadedDocument, classifyDocumentText, extractPdfText } from "./bench-document-ai.js";
 
 test("no text (a scanned image with nothing extractable) is a clean, honest fallback — never a guess", async () => {
   const result = await classifyDocumentText({ AI: { run: async () => { throw new Error("should never be called"); } } }, "", "scan.pdf");
@@ -45,7 +45,22 @@ test("a model failure (thrown error, or unparseable response) never fabricates a
 });
 
 test("a non-PDF file is never sent to unpdf at all — extractPdfText returns empty text immediately", async () => {
-  const file = new File(["plain text content"], "notes.txt", { type: "text/plain" });
-  const text = await extractPdfText(file);
+  const bytes = new TextEncoder().encode("plain text content").buffer;
+  const text = await extractPdfText(bytes, "notes.txt", "text/plain");
   assert.equal(text, "");
+});
+
+test("a file over the analyzable size limit is never fetched or read — the size check alone decides", async () => {
+  const fetchBytes = async () => { throw new Error("should never be called — size check must short-circuit first"); };
+  const result = await analyzeUploadedDocument({ AI: { run: async () => { throw new Error("should never be called either"); } } }, "huge.pdf", "application/pdf", MAX_ANALYZABLE_BYTES + 1, fetchBytes);
+  assert.equal(result.source, "upload-too-large-to-analyze");
+  assert.equal(result.caseNumber, null);
+  assert.match(result.fact, /huge\.pdf/);
+});
+
+test("a file within the size limit is fetched and analyzed normally", async () => {
+  const fakeAI = { run: async () => ({ response: JSON.stringify({ documentType: "A small notice", caseNumber: null }) }) };
+  const fetchBytes = async () => new TextEncoder().encode("not actually a pdf, so extraction yields no text").buffer;
+  const result = await analyzeUploadedDocument({ AI: fakeAI }, "small.txt", "text/plain", 1024, fetchBytes);
+  assert.equal(result.source, "upload-unreadable");
 });

@@ -54,7 +54,7 @@ function applyOrderBy(rows, orderBy) {
 export function createFakeD1() {
   const tables = {
     cases: [], docket_entries: [], patterns: [], glossary_terms: [],
-    documents: [], entrusted_notes: [], access_grants: [], ingest_items: [],
+    documents: [], entrusted_notes: [], access_grants: [], ingest_items: [], document_recordings: [],
   };
 
   function exec(sqlRaw, boundArgs) {

@@ -1,6 +1,6 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { handleBenchGet, handleBenchPost } from "./bench-working.js";
+import { handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
 import { resetCertsCacheForTests } from "../../shared/access.js";
 import { createFakeD1 } from "../../shared/test-fake-d1.mjs";
 import { createFakeR2 } from "../../shared/test-fake-r2.mjs";
@@ -54,6 +54,21 @@ function setup(jwk) {
 
 const authedRequest = (url, token, opts = {}) =>
   new Request(url, { ...opts, headers: { ...(opts.headers || {}), "Cf-Access-Jwt-Assertion": token } });
+
+// Mirrors exactly what bench-client-script.js's uploadBlob() does: PUT the
+// raw bytes to /bench/blobs/:blobId with Content-Type and X-Filename, then
+// hand the resulting { blobId, filename, contentType } straight to whatever
+// form the real page would submit next.
+async function putBlob(env, token, filename, contentType, bytes) {
+  const blobId = crypto.randomUUID();
+  const req = authedRequest(`https://darius.life/bench/blobs/${blobId}`, token, {
+    method: "PUT",
+    body: bytes,
+    headers: { "content-type": contentType, "x-filename": encodeURIComponent(filename) },
+  });
+  const res = await handleBenchPut(req, env, new URL(`https://darius.life/bench/blobs/${blobId}`));
+  return { res, blobId, filename, contentType };
+}
 
 test("GET /bench/ without a token is forbidden and never touches D1", async () => {
   const { env, fakeD1 } = setup(null);
@@ -116,7 +131,27 @@ test("adding a document with a javascript: storageRef is rejected and writes not
   assert.equal(fakeD1.tables.documents.length, 0);
 });
 
-test("uploading a document is the default creation path: nothing but the file and optional notes required", async () => {
+test("PUT /bench/blobs/:id streams the bytes straight to R2 without ever buffering the whole file into a File/FormData object", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeR2 } = setup(jwk);
+  const { res, blobId } = await putBlob(env, token, "motion.pdf", "application/pdf", "hello world");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.size, 11);
+  const key = body.key;
+  assert.match(key, new RegExp(`^bench-blobs/${blobId}/`));
+  assert.equal(fakeR2.objects.get(key).bytes.toString(), "hello world");
+});
+
+test("PUT /bench/blobs/:id without a token is forbidden and writes nothing to R2", async () => {
+  const { env, fakeR2 } = setup(null);
+  const req = new Request("https://darius.life/bench/blobs/some-id", { method: "PUT", body: "data" });
+  const res = await handleBenchPut(req, env, new URL("https://darius.life/bench/blobs/some-id"));
+  assert.equal(res.status, 403);
+  assert.equal(fakeR2.objects.size, 0);
+});
+
+test("uploading a document is the default creation path: the blob is PUT first, then finalize does nothing but its own analysis and Darius's optional notes", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1, fakeR2 } = setup(jwk);
 
@@ -124,15 +159,15 @@ test("uploading a document is the default creation path: nothing but the file an
   // "content couldn't be read" path — bench-document-ai.test.mjs covers the
   // AI-classification branch on its own, and findOrCreateCaseByNumber's own
   // tests (workers/shared/bench-data.test.mjs) cover matching an existing
-  // case by a real extracted number. What this proves: the upload route
-  // asks for nothing but a file, still creates a case/entry/document, and
-  // tags the entry so it's never mistaken for Darius's own typed fact.
-  const form = new FormData();
-  form.append("file", new File(["hello world"], "motion.pdf", { type: "application/pdf" }));
-  form.append("commentary", "Looks routine.");
+  // case by a real extracted number. What this proves: the two-step upload
+  // (PUT the bytes, then finalize) still creates a case/entry/document end
+  // to end, and tags the entry so it's never mistaken for Darius's own
+  // typed fact.
+  const { blobId, filename, contentType } = await putBlob(env, token, "motion.pdf", "application/pdf", "hello world");
 
-  const req = authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form });
-  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/upload"));
+  const form = new URLSearchParams({ blobId, filename, contentType, commentary: "Looks routine." });
+  const req = authedRequest("https://darius.life/bench/upload/finalize", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/upload/finalize"));
   assert.equal(res.status, 303);
 
   assert.equal(fakeD1.tables.cases.length, 1);
@@ -149,27 +184,43 @@ test("uploading a document is the default creation path: nothing but the file an
   const doc = fakeD1.tables.documents[0];
   assert.equal(doc.storage_kind, "upload");
   assert.equal(doc.entry_id, entry.id);
-  assert.equal(fakeR2.objects.size, 1);
   assert.equal(fakeR2.objects.get(doc.storage_ref).bytes.toString(), "hello world");
 });
 
-test("notes are the only optional field — leaving them out still uploads cleanly", async () => {
+test("notes are the only optional field — leaving them out still finalizes cleanly", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1 } = setup(jwk);
-  const form = new FormData();
-  form.append("file", new File(["x"], "notice.pdf", { type: "application/pdf" }));
-  const res = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form }), env, new URL("https://darius.life/bench/upload"));
+  const { blobId, filename, contentType } = await putBlob(env, token, "notice.pdf", "application/pdf", "x");
+  const form = new URLSearchParams({ blobId, filename, contentType });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/upload/finalize", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/upload/finalize"),
+  );
   assert.equal(res.status, 303);
   assert.equal(fakeD1.tables.docket_entries[0].commentary, null);
 });
 
-test("an upload with no file at all is rejected and writes nothing", async () => {
+test("finalize refuses to proceed if the blob it's told about was never actually uploaded", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  const form = new URLSearchParams({ blobId: "never-uploaded", filename: "ghost.pdf", contentType: "application/pdf" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/upload/finalize", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/upload/finalize"),
+  );
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.cases.length, 0);
+});
+
+test("finalizing with no blobId/filename at all (no file was ever chosen) is rejected and writes nothing", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1 } = setup(jwk);
 
-  const noFile = new FormData();
-  noFile.append("commentary", "Something");
-  const res = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFile }), env, new URL("https://darius.life/bench/upload"));
+  const form = new URLSearchParams({ commentary: "Something" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/upload/finalize", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/upload/finalize"),
+  );
   assert.equal(res.status, 400);
 
   assert.equal(fakeD1.tables.cases.length, 0);
@@ -365,4 +416,79 @@ test("the management page reports accurate shared document and entry counts per 
   const html = await res.text();
   assert.match(html, /Family matter/);
   assert.match(html, /1 document, 1 timeline entry shared/);
+});
+
+test("a document's own page lists its recordings, newest-noted first, and links back to the case", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "bench-blobs/doc-1/Motion.pdf", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "2026-09-01", body: "First thought.", audio_storage_ref: null, audio_mime_type: null, audio_duration_seconds: null, created_at: "t" });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-1", token), env, new URL("https://darius.life/bench/documents/doc-1"));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /First thought\./);
+  assert.match(html, /Family matter/);
+});
+
+test("adding a recording with only a typed note (no audio) works — audio is optional", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const form = new URLSearchParams({ notedAt: "2026-09-28", body: "Called opposing counsel today." });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.document_recordings.length, 1);
+  assert.equal(fakeD1.tables.document_recordings[0].audio_storage_ref, null);
+});
+
+test("adding a recording with audio but no typed note works, and the audio streams back from its own route", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const { blobId, filename, contentType } = await putBlob(env, token, "voice.m4a", "audio/m4a", "the actual audio bytes");
+  const form = new URLSearchParams({ notedAt: "2026-09-28", blobId, filename, contentType });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"));
+  assert.equal(res.status, 303);
+
+  const recording = fakeD1.tables.document_recordings[0];
+  assert.equal(recording.body, null);
+  assert.ok(recording.audio_storage_ref);
+
+  const fileRes = await handleBenchGet(authedRequest(`https://darius.life/bench/recordings/${recording.id}/file`, token), env, new URL(`https://darius.life/bench/recordings/${recording.id}/file`));
+  assert.equal(fileRes.status, 200);
+  assert.equal(await fileRes.text(), "the actual audio bytes");
+});
+
+test("a recording with neither a note nor audio is rejected — not neither", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const form = new URLSearchParams({ notedAt: "2026-09-28" });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"));
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.document_recordings.length, 0);
+});
+
+test("GET /bench/static/bench.js serves the client script, Access-gated like everything else", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  const noAuth = await handleBenchGet(new Request("https://darius.life/bench/static/bench.js"), env, new URL("https://darius.life/bench/static/bench.js"));
+  assert.equal(noAuth.status, 403);
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/static/bench.js", token), env, new URL("https://darius.life/bench/static/bench.js"));
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /javascript/);
+  const body = await res.text();
+  assert.match(body, /MediaRecorder/);
 });

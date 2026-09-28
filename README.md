@@ -101,6 +101,38 @@ Darius's own docket:
   it is Darius taking authorship, the same as if he'd typed it himself. The
   longer "add a case" form (title, court, case number) is still there,
   further down, for when there's no document yet.
+- **A large file used to crash the upload outright.** The original
+  handler read the whole file into the Worker's own memory twice
+  (`request.formData()`'s multipart parsing, then `file.arrayBuffer()` for
+  text extraction) — Workers have a hard, per-isolate 128&nbsp;MB memory
+  ceiling, shared across every in-flight request, and exceeding it kills
+  the request outright, not a catchable error. Every upload now goes
+  through `PUT /bench/blobs/:id` first (`handleBenchPut`), which streams
+  `request.body` straight to R2 and never materializes the file in memory
+  at all; the finalize step that follows checks the object's size via
+  R2's own `head()` — no bytes fetched — and skips analysis entirely
+  (`bench-document-ai.js`'s `MAX_ANALYZABLE_BYTES`, 20&nbsp;MB) rather than
+  risk the same ceiling a second time trying to read a huge PDF's text.
+  This is also why the upload and document pages now load one small,
+  first-party script (`bench-client-script.js`, served same-origin at
+  `/bench/static/bench.js`) under an explicit `script-src 'self'` CSP
+  override — a browser form alone cannot `PUT` a raw body, and every
+  other page in Bench Notes keeps the original `script-src 'none'`.
+  **The real ceiling above this fix is Cloudflare's own, not this code's:**
+  the account's plan caps the request body Cloudflare's edge will even
+  forward to the Worker (100&nbsp;MB Free/Pro, 200&nbsp;MB Business, up to
+  5&nbsp;GB Enterprise) — a file over that limit is refused before this
+  Worker ever sees it, and raising it needs a plan change or R2 multipart
+  upload direct from the browser, neither of which is built here.
+- **Any number of dated recordings or notes per document**
+  (`document_recordings`), added whenever there's more to say, not fixed
+  at upload time — reachable from each document's own page (the "notes &
+  recordings" link next to it on the case page). Each one is a typed
+  note, a recording, or both — never neither. Recording live uses the
+  same script and the same streaming `PUT /bench/blobs/:id`: a `● Record`
+  button captures audio via `MediaRecorder`, and on stop, uploads it
+  exactly like a chosen file. Working-side only, like commentary — never
+  shared, never entrusted-visible.
 - An **entrusted-access management area** on the case list page: every
   guest's passphrase grant, which cases they're scoped to, how many
   documents and timeline entries are actually shared with them (computed

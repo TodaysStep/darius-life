@@ -1,7 +1,8 @@
 // confidential.darius.life/bench/* — Bench Notes working side. Darius's own
 // private docket: cases, dated timeline entries carrying four simultaneous
 // layers (fact, recommended direction, his commentary, court takeaways), a
-// living glossary, and pattern-spotting on judge/opposing-counsel behavior.
+// living glossary, pattern-spotting on judge/opposing-counsel behavior, and
+// any number of dated recordings/notes per document.
 //
 // Gated by the pre-existing Cloudflare Access application that already
 // protected confidential.darius.life ("confidential legal area," policy
@@ -15,15 +16,40 @@
 // patterns, or glossary_terms. That is what keeps the entrusted side
 // structurally unable to reach this data, rather than merely filtered away
 // from it.
+//
+// A large upload used to crash outright: the old handler read the whole
+// file into the Worker's own memory (once via request.formData(), again via
+// file.arrayBuffer() for text extraction) — Workers have a hard, per-isolate
+// 128 MB memory ceiling, shared across every in-flight request, and
+// exceeding it gets the in-flight request killed outright, not a catchable
+// error. Every upload now goes through PUT /bench/blobs/:id first (see
+// handleBenchPut below), which streams request.body straight to R2 without
+// ever materializing the file in memory, and separately, analysis
+// (bench-document-ai.js) is skipped entirely — cheaply, before fetching any
+// bytes, via R2's own head() — for anything over MAX_ANALYZABLE_BYTES. That
+// streaming PUT is why this file now serves one small piece of first-party
+// JavaScript (bench-client-script.js) on the two pages that need it: a
+// browser form alone cannot PUT a raw (non-multipart) body, and live audio
+// recording (MediaRecorder) has no non-JS equivalent at all. Both pages
+// declare an explicit script-src 'self' CSP override for exactly that
+// reason — every other page in Bench Notes keeps script-src 'none'.
 import { requireAccess } from "../../shared/access.js";
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
 import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
+import { BENCH_CLIENT_JS } from "./bench-client-script.js";
 
 export const PREFIX = "/bench/";
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const UPLOAD_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://darius.life; script-src 'self'; connect-src 'self'";
+// A sanity ceiling, not a real one: R2's own single-PUT limit is 5 GiB, but
+// Cloudflare's edge enforces its own request body size limit ahead of this
+// Worker entirely, based on the account's plan (100 MB on Free/Pro, 200 MB
+// on Business, up to 5 GB on Enterprise) — a request over that limit never
+// reaches this code at all. This constant exists only to reject something
+// absurd cheaply, at head() time, not to promise any particular ceiling.
+const MAX_STORABLE_BYTES = 2 * 1024 * 1024 * 1024;
 
 const forbidden = () => new Response("Forbidden", { status: 403, headers: headers("text/plain; charset=utf-8") });
 const notFound = () => new Response("Not Found", { status: 404, headers: headers("text/plain; charset=utf-8") });
@@ -53,6 +79,8 @@ const listDocuments = (env, caseId) => data.listDocuments(env.BENCH_NOTES, caseI
 const addDocument = (env, fields) => data.addDocument(env.BENCH_NOTES, fields);
 const setDocumentShared = (env, id, shared) => data.setDocumentShared(env.BENCH_NOTES, id, shared);
 const listEntrustedNotes = (env, caseId) => data.listEntrustedNotes(env.BENCH_NOTES, caseId);
+const listDocumentRecordings = (env, documentId) => data.listDocumentRecordings(env.BENCH_NOTES, documentId);
+const addDocumentRecording = (env, fields) => data.addDocumentRecording(env.BENCH_NOTES, fields);
 const addEntrustedNote = (env, fields) => data.addEntrustedNote(env.BENCH_NOTES, fields);
 const listGrants = (env) => data.listGrants(env.BENCH_NOTES);
 const createGrant = (env, fields) => data.createGrant(env.BENCH_NOTES, fields);
@@ -83,6 +111,19 @@ ${g.revoked_at ? "" : `<form method="post" action="${PREFIX}grants/${escapeHtml(
 </div>`;
 }
 
+// Shared by the document-upload form and the recording-upload/record form
+// below — the hidden fields bench-client-script.js fills in once the file's
+// bytes are safely in R2, plus a progress bar and a status line it writes
+// to. The file input itself carries no name attribute: it is never actually
+// part of the submitted form body, only read by the script.
+function blobUploadFields() {
+  return `<input type="hidden" name="blobId" data-blob-id>
+<input type="hidden" name="filename" data-blob-filename>
+<input type="hidden" name="contentType" data-blob-content-type>
+<progress data-upload-progress value="0" max="1" style="display:none;width:100%;margin:0.4em 0"></progress>
+<p data-upload-status class="hint" style="display:none"></p>`;
+}
+
 function renderCaseList(cases, grants, grantSummaries) {
   const rows = cases.length
     ? cases.map((c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`).join("\n")
@@ -96,15 +137,17 @@ function renderCaseList(cases, grants, grantSummaries) {
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
 
 <h2>Upload a document</h2>
-<p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional.</p>
-<form method="post" action="${PREFIX}upload" enctype="multipart/form-data">
+<p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional. Large files upload directly with a progress bar, so a big scan won't hang or crash the page.</p>
+<form method="post" action="${PREFIX}upload/finalize" data-blob-upload>
 <label for="uploadFile">Document</label>
-<input type="file" id="uploadFile" name="file" required>
+<input type="file" id="uploadFile" data-blob-file required>
+${blobUploadFields()}
 <label for="uploadCommentary">Your notes about it (optional — private, never shared)</label>
 <textarea id="uploadCommentary" name="commentary"></textarea>
 <button type="submit">Upload</button>
 </form>
-<p class="hint">If the document can't be read automatically (a scanned image with no text layer, for instance), it still uploads — the entry is tagged so you know to fill in the rest yourself from the case page.</p>
+<p class="hint">If the document can't be read automatically (a scanned image with no text layer, or a file over 20&nbsp;MB, which skips automatic reading), it still uploads — the entry is tagged so you know to fill in the rest yourself from the case page.</p>
+<script src="${PREFIX}static/bench.js"></script>
 <div class="ticker"></div>
 ${rows}
 
@@ -133,6 +176,7 @@ ${grantRows}
 <fieldset>${caseCheckboxes || '<p class="hint">Add a case first.</p>'}</fieldset>
 <button type="submit">Grant access</button>
 </form>`,
+    { csp: UPLOAD_CSP },
   );
 }
 
@@ -184,11 +228,58 @@ function documentOwnerHref(d) {
 function renderDocumentRow(base, d) {
   const shared = Boolean(d.shared_at);
   const toggleAction = `${base}/documents/${escapeHtml(d.id)}/${shared ? "unshare" : "share"}`;
-  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""}</span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>`;
+  const detailHref = `${PREFIX}documents/${escapeHtml(d.id)}`;
+  return `<div class="case-row"><span><a href="${escapeHtml(documentOwnerHref(d))}">${escapeHtml(d.title)}</a>${d.filed_date ? ` <span class="hint">(${escapeHtml(d.filed_date)})</span>` : ""} · <a href="${detailHref}">notes &amp; recordings</a></span><span class="status">${shared ? `shared ${escapeHtml(d.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>`;
 }
 
 function renderNoteRow(n) {
   return `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`;
+}
+
+function formatDuration(seconds) {
+  const s = Math.round(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function renderRecordingRow(r) {
+  const audio = r.audio_storage_ref
+    ? `<audio controls src="${PREFIX}recordings/${escapeHtml(r.id)}/file" style="width:100%;margin-top:0.5em"></audio>${r.audio_duration_seconds ? `<span class="hint">${formatDuration(r.audio_duration_seconds)}</span>` : ""}`
+    : "";
+  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}</div>`;
+}
+
+// A document's own page — where "record or upload multiple recordings per
+// document, at different points in time" actually lives, rather than
+// crowding the already form-dense case page with it. Reachable from the
+// case page's "notes & recordings" link next to each document.
+function renderDocumentDetail(caseRow, doc, recordings) {
+  const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  return benchPage(
+    doc.title,
+    `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(doc.title)}<span class="tag">${escapeHtml(caseRow.title)}</span></h1></header>
+<p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a></p>
+<p class="hint"><a href="${escapeHtml(documentOwnerHref(doc))}">Open the document itself</a>${doc.filed_date ? ` — filed ${escapeHtml(doc.filed_date)}` : ""}</p>
+
+<h2>Notes &amp; recordings</h2>
+<p class="hint">Your own thinking about this document, dated, as many as you like, added whenever something changes — never shared, never entrusted-visible.</p>
+${recordings.length ? recordings.map(renderRecordingRow).join("\n") : `<p class="hint">Nothing recorded yet.</p>`}
+
+<h3>Add one</h3>
+<form method="post" action="${base}/documents/${escapeHtml(doc.id)}/recordings" id="recordingForm" data-blob-upload>
+<label for="recordingDate">Date this is about</label>
+<input type="date" id="recordingDate" name="notedAt" value="${today}" required>
+<label for="recordingBody">Note (optional — type one, or just record and leave this blank)</label>
+<textarea id="recordingBody" name="body"></textarea>
+<label for="recordingFile">Audio (optional — upload a file, or use Record below)</label>
+<input type="file" id="recordingFile" data-blob-file accept="audio/*">
+${blobUploadFields()}
+<div class="case-row"><button type="button" data-record="recordingForm">● Record</button><span data-record-timer class="hint">00:00</span></div>
+<button type="submit">Save</button>
+</form>
+<script src="${PREFIX}static/bench.js"></script>`,
+    { csp: UPLOAD_CSP },
+  );
 }
 
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -362,9 +453,81 @@ export async function handleBenchGet(request, env, url) {
         },
       });
     }
+
+    const docDetailMatch = path.match(/^documents\/([^/]+)$/);
+    if (docDetailMatch) {
+      const doc = await data.getDocument(env.BENCH_NOTES, docDetailMatch[1]);
+      if (!doc) return notFound();
+      const caseRow = await getCase(env, doc.case_id);
+      if (!caseRow) return notFound();
+      const recordings = await listDocumentRecordings(env, doc.id);
+      return html(renderDocumentDetail(caseRow, doc, recordings));
+    }
+
+    const recordingFileMatch = path.match(/^recordings\/([^/]+)\/file$/);
+    if (recordingFileMatch) {
+      const recording = await env.BENCH_NOTES.prepare("SELECT * FROM document_recordings WHERE id = ?").bind(recordingFileMatch[1]).first();
+      if (!recording || !recording.audio_storage_ref) return notFound();
+      const object = await env.BENCH_DOCUMENTS.get(recording.audio_storage_ref);
+      if (!object) return notFound();
+      return new Response(object.body, {
+        headers: {
+          "content-type": object.httpMetadata?.contentType || "application/octet-stream",
+          "cache-control": "private, no-store",
+        },
+      });
+    }
+
+    if (path === "static/bench.js") {
+      return new Response(BENCH_CLIENT_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "private, max-age=3600" } });
+    }
     return notFound();
   } catch (e) {
     return html(errorPage(e.message), 502);
+  }
+}
+
+// PUT /bench/blobs/:blobId — streams request.body straight to R2. This is
+// the fix for the crash: request.body is a ReadableStream R2's put() reads
+// as it arrives, never materialized whole in the Worker's own memory,
+// unlike the old handler's request.formData() (which must parse — and so
+// buffer — an entire multipart body before it resolves) or file.arrayBuffer()
+// (a second full in-memory copy on top of that). A blobId is generated
+// client-side before the PUT even starts (bench-client-script.js), so this
+// route needs nothing back from the caller except confirmation it worked;
+// the finalize/recording routes below recompute the identical key from the
+// same (blobId, filename) pair rather than this route inventing or storing
+// one anywhere.
+export async function handleBenchPut(request, env, url) {
+  const payload = await requireAccess(request, env);
+  if (!payload) return forbidden();
+
+  const path = url.pathname.slice(PREFIX.length);
+  const blobMatch = path.match(/^blobs\/([^/]+)$/);
+  if (!blobMatch) return notFound();
+  const jsonError = (message, status) => new Response(JSON.stringify({ error: message }), { status, headers: { "content-type": "application/json" } });
+  if (!request.body) return jsonError("No file data received.", 400);
+
+  const filenameHeader = request.headers.get("x-filename");
+  let filename = "file";
+  try {
+    filename = filenameHeader ? decodeURIComponent(filenameHeader) : "file";
+  } catch {
+    filename = filenameHeader || "file";
+  }
+  const contentType = request.headers.get("content-type") || "application/octet-stream";
+  const key = data.benchBlobKey(blobMatch[1], filename);
+
+  try {
+    const object = await env.BENCH_DOCUMENTS.put(key, request.body, { httpMetadata: { contentType } });
+    if (!object) return jsonError("The upload didn't complete.", 502);
+    if (object.size > MAX_STORABLE_BYTES) {
+      await env.BENCH_DOCUMENTS.delete(key);
+      return jsonError("That file is larger than Bench Notes will store.", 413);
+    }
+    return new Response(JSON.stringify({ key, size: object.size }), { status: 200, headers: { "content-type": "application/json" } });
+  } catch (e) {
+    return jsonError(e.message, 502);
   }
 }
 
@@ -384,16 +547,28 @@ export async function handleBenchPost(request, env, url) {
       return Response.redirect(`https://darius.life${PREFIX}case/${id}`, 303);
     }
 
-    if (path === "upload") {
-      const file = form.get("file");
-      if (!file || typeof file === "string" || !file.size) return html(errorPage("Choose a document to upload."), 400);
-      if (file.size > MAX_UPLOAD_BYTES) return html(errorPage("Files up to 25 MB are accepted."), 413);
+    if (path === "upload/finalize") {
+      // The file's bytes are already in R2 (PUT /bench/blobs/:id, before
+      // this ever ran) — this step never reads them itself except through
+      // analyzeUploadedDocument's own size-gated, head()-first path. blobId
+      // and filename are exactly what the PUT used, so benchBlobKey
+      // recomputes the identical key rather than needing it passed back.
+      const blobId = form.get("blobId");
+      const filename = form.get("filename");
+      const contentType = form.get("contentType") || "application/octet-stream";
+      if (!blobId || !filename) return html(errorPage("Choose a document to upload."), 400);
+      const key = data.benchBlobKey(blobId, filename);
+      const head = await env.BENCH_DOCUMENTS.head(key);
+      if (!head) return html(errorPage("That upload didn't complete — try again."), 400);
 
-      // The only two things Bench Notes doesn't try to read for itself: the
-      // bytes, and Darius's own optional notes. Everything else — what the
-      // document is, and which case it belongs to — comes from
-      // bench-document-ai.js's own read of the file.
-      const analysis = await analyzeUploadedDocument(env, file);
+      // What the document is, and which case it belongs to, come from
+      // bench-document-ai.js's own read of the file — the only two things
+      // Bench Notes doesn't try to read for itself are the bytes (already
+      // handled) and Darius's own optional notes.
+      const analysis = await analyzeUploadedDocument(env, filename, contentType, head.size, async () => {
+        const object = await env.BENCH_DOCUMENTS.get(key);
+        return object.arrayBuffer();
+      });
       const caseRow = await data.findOrCreateCaseByNumber(env.BENCH_NOTES, analysis.caseNumber, crypto.randomUUID());
       const caseId = caseRow.id;
 
@@ -409,9 +584,7 @@ export async function handleBenchPost(request, env, url) {
       });
 
       const docId = crypto.randomUUID();
-      const key = data.documentObjectKey(docId, file.name);
-      await env.BENCH_DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" } });
-      await addDocument(env, { id: docId, caseId, caseLabel: caseRow.title, entryId, title: file.name, storageKind: "upload", storageRef: key });
+      await addDocument(env, { id: docId, caseId, caseLabel: caseRow.title, entryId, title: filename, storageKind: "upload", storageRef: key });
 
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
@@ -506,6 +679,41 @@ export async function handleBenchPost(request, env, url) {
       if (!(await getCase(env, caseId))) return notFound();
       await setDocumentShared(env, docId, action === "share");
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
+    const recordingMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings$/);
+    if (recordingMatch) {
+      const [, caseId, docId] = recordingMatch;
+      const caseRow = await getCase(env, caseId);
+      if (!caseRow) return notFound();
+      if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
+      const notedAt = form.get("notedAt");
+      const body = form.get("body");
+      const blobId = form.get("blobId");
+      const filename = form.get("filename");
+      if (!notedAt) return html(errorPage("Say which date this is about."), 400);
+      if (!body && !blobId) return html(errorPage("Add a typed note, a recording, or both — not neither."), 400);
+
+      let audioStorageRef = null;
+      let audioMimeType = null;
+      if (blobId && filename) {
+        const key = data.benchBlobKey(blobId, filename);
+        const head = await env.BENCH_DOCUMENTS.head(key);
+        if (!head) return html(errorPage("That recording didn't finish uploading — try again."), 400);
+        audioStorageRef = key;
+        audioMimeType = form.get("contentType") || "application/octet-stream";
+      }
+
+      await addDocumentRecording(env, {
+        id: crypto.randomUUID(),
+        documentId: docId,
+        caseId,
+        notedAt,
+        body,
+        audioStorageRef,
+        audioMimeType,
+      });
+      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
     }
 
     const notesMatch = path.match(/^case\/([^/]+)\/notes$/);

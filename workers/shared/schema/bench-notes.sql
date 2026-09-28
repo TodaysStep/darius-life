@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS docket_entries (
   shared_at             TEXT,                -- null until Darius manually shares this entry —
                                               -- never automatic, same pattern as documents.shared_at
   source                TEXT NOT NULL DEFAULT 'manual',  -- manual | green-filing-ingest |
-                                                          -- upload-ai | upload-unreadable | upload-ai-failed
+                                                          -- upload-ai | upload-unreadable |
+                                                          -- upload-ai-failed | upload-too-large-to-analyze
                                                           -- (the upload-* values are bench-document-ai.js's
                                                           -- own read of an uploaded file, not Darius's own
                                                           -- typed fact — the UI tags these visibly)
@@ -107,6 +108,25 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS idx_documents_case ON documents(case_id);
 CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
+
+-- Any number of dated recordings and/or typed notes about one document —
+-- Darius adding his thinking about it as it develops, not one note fixed at
+-- upload time. Working-side only; never shared, never entrusted-visible,
+-- same as commentary. body and audio_storage_ref are each independently
+-- optional (a text-only note, or audio with no separate note), though the
+-- write path never allows both to be empty.
+CREATE TABLE IF NOT EXISTS document_recordings (
+  id                      TEXT PRIMARY KEY,
+  document_id             TEXT NOT NULL REFERENCES documents(id),
+  case_id                 TEXT NOT NULL REFERENCES cases(id),  -- denormalized, same reason as documents.case_label
+  noted_at                TEXT NOT NULL,   -- the date this note/recording is ABOUT, not just created_at
+  body                    TEXT,
+  audio_storage_ref       TEXT,            -- an R2 key (bench-data.js's benchBlobKey), never a URL
+  audio_mime_type         TEXT,
+  audio_duration_seconds  INTEGER,
+  created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_document_recordings_document ON document_recordings(document_id, noted_at);
 
 -- Occasional notes Darius writes directly to the entrusted side — distinct
 -- from commentary (working-side, never shared). Also manual, also never
