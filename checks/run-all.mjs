@@ -224,10 +224,6 @@ await check(6, "Every link resolves", async () => {
         if (!allow.mailto.includes(addr)) p.push(`mailto address not approved: ${addr}`);
       } else if (href.startsWith("#")) {
         if (!d.getElementById(href.slice(1))) p.push(`${rel(file)}: in-page anchor ${href} has no target`);
-      } else if (href === "/legal/private/") {
-        // Served by workers/private-legal, not by this build — checked live
-        // (acceptance 5/6), not against dist/, and never fetched at build time
-        // (it requires an Access login this script doesn't have).
       } else if (href.startsWith("/")) {
         const target = path.join(DIST, href.endsWith("/") ? `${href}index.html` : href);
         if (!fs.existsSync(target)) p.push(`${href} is not in the build output`);
