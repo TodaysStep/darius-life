@@ -15,6 +15,13 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // Cloudflare Access sends a browser back to exactly the path it first
+    // tried, after login — so visiting the bare hostname with no path at
+    // all lands here on "/" post-login, which this Worker has never served
+    // (it only ever served /bench/*): a real 404, not a cosmetic one, the
+    // first time anyone lands on the bare domain rather than a /bench/ link.
+    if (url.pathname === "/") return Response.redirect(`https://${url.host}${BENCH_PREFIX}`, 302);
+
     if (url.pathname.startsWith(BENCH_PREFIX)) {
       if (request.method === "GET") return handleBenchGet(request, env, url);
       if (request.method === "POST") return handleBenchPost(request, env, url);
