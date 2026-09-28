@@ -554,7 +554,7 @@ function renderDocumentDetail(caseRow, doc, recordings, { entries = [], otherDoc
     : `<p class="hint">Nothing recorded yet.</p>`;
   return benchPage(
     doc.title,
-    `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(doc.title)}<span class="tag">${escapeHtml(caseRow.title)}</span></h1></header>
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(doc.title)}<span class="tag">${escapeHtml(caseRow.title)}</span></h1></header>
 <p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
 <p class="hint"><a href="${escapeHtml(documentOwnerHref(doc))}">Open the document itself</a></p>
 
@@ -623,7 +623,7 @@ function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes
 
   return benchPage(
     caseRow.title,
-    `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">${escapeHtml(caseRow.status)}${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(caseRow.title)}<span class="tag">${escapeHtml(caseRow.status)}${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
 <p class="note"><a href="${PREFIX}">&larr; All cases</a> · <a href="${base}/packet">Filing packet (print/export) &rarr;</a></p>
 
 ${renderCaseSummary(base, caseRow)}
@@ -733,7 +733,7 @@ function renderFilingPacket(caseRow, documents) {
     : `<p class="hint">No documents on file yet.</p>`;
   return benchPage(
     `Filing packet — ${caseRow.title}`,
-    `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">Filing packet${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(caseRow.title)}<span class="tag">Filing packet${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
 <p class="note"><a href="${PREFIX}case/${escapeHtml(caseRow.id)}">&larr; Back to ${escapeHtml(caseRow.title)}</a> — use your browser's own Print (Ctrl/Cmd+P) to save this as a PDF.</p>
 <h2>Documents</h2>
 ${rows}`,

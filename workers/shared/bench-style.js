@@ -12,8 +12,9 @@ export const headers = (contentType) => ({
 });
 
 // The stenotype image is supplied on a plain white background and is shown
-// that way deliberately — no transparent cutout — inside a small white card
-// so it reads cleanly against the aged-paper page background around it.
+// that way deliberately — no transparent cutout — against a plain white
+// span of its own (no border/shadow framing it) so the image's own white
+// background blends seamlessly rather than sitting inside a visible box.
 //
 // Always the darius.life-hosted copy (the public static build), by absolute
 // URL, never a relative path: confidential.darius.life is a different
@@ -23,7 +24,7 @@ export const headers = (contentType) => ({
 // place it's served from, referenced the same way from both Workers.
 export const STENOTYPE_URL = "https://darius.life/assets/bench/stenotype.jpg";
 
-export const STENOTYPE_ICON = (size = 56) =>
+export const STENOTYPE_ICON = (size = 96) =>
   `<span class="steno-icon" style="width:${size}px;height:${size}px"><img src="${STENOTYPE_URL}" alt="Stenotype machine" width="${size}" height="${size}"></span>`;
 
 const STYLE = `
@@ -37,14 +38,16 @@ body {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .page { max-width: 40em; margin: 0 auto; padding: 1.2em 1.1em 4em; }
-header.bench-header { display: flex; align-items: center; gap: 0.8em; margin-bottom: 0.4em; }
+header.bench-header {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 0.5em; margin-bottom: 0.4em;
+}
 .steno-icon {
-  display: inline-flex; flex: none; background: #FFFFFF; border: 1px solid #2A231833;
-  border-radius: 0.3em; padding: 0.15em; box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  display: inline-flex; flex: none; background: #FFFFFF;
 }
 .steno-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
 h1 { font-size: 1.25em; margin: 0; letter-spacing: 0.01em; }
-h1 .tag { display: block; font-size: 0.55em; font-weight: normal; letter-spacing: 0.15em; text-transform: uppercase; opacity: 0.65; margin-top: 0.15em; }
+h1 .tag { display: block; font-size: 0.55em; font-weight: normal; letter-spacing: 0.15em; text-transform: uppercase; opacity: 0.65; margin-top: 0.3em; }
 h2 {
   font-size: 0.95em; margin: 1.8em 0 0.7em; padding-bottom: 0.4em;
   border-bottom: 2px dotted #2A231855; letter-spacing: 0.04em; text-transform: uppercase;
