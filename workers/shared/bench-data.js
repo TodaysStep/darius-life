@@ -276,6 +276,37 @@ export async function deleteDocumentRecording(db, id) {
   await db.prepare("DELETE FROM document_recordings WHERE id = ?").bind(id).run();
 }
 
+// Every recording across every document in a case, for bench-case-summary.js
+// to draw on — so a voice note's own content (typed body, or a Whisper
+// transcript once one exists) helps the case summary improve as it's
+// added, the same way a new document or timeline entry already does.
+export async function listCaseRecordings(db, caseId) {
+  const { results } = await db.prepare(
+    "SELECT * FROM document_recordings WHERE case_id = ? ORDER BY noted_at DESC, created_at DESC",
+  ).bind(caseId).all();
+  return results;
+}
+
+// bench-transcribe.js's own write, after it runs against a recording's
+// audio — see bench-working.js's transcribeRecordingInBackground. Never
+// touches transcript_source: that's set once, by whichever of this
+// function or editRecordingTranscript wrote most recently.
+export async function updateRecordingTranscript(db, id, transcript, error) {
+  await db.prepare(
+    "UPDATE document_recordings SET transcript = ?, transcript_error = ?, transcript_source = ? WHERE id = ?",
+  ).bind(transcript, error, "auto", id).run();
+}
+
+// Darius correcting a transcription mistake — same "auto until a human
+// takes authorship" pattern as docket_entries.source flipping to "manual"
+// on entry edit. Clears transcript_error, since a saved correction is by
+// definition not a failed transcription anymore.
+export async function editRecordingTranscript(db, id, transcript) {
+  await db.prepare(
+    "UPDATE document_recordings SET transcript = ?, transcript_error = ?, transcript_source = ? WHERE id = ?",
+  ).bind(transcript, null, "manual", id).run();
+}
+
 // Entrusted notes — occasional notes Darius (or the desk, on his behalf)
 // writes directly TO the entrusted side. Distinct from commentary
 // (working-side, never shared): these are written knowing a guest will

@@ -18,7 +18,7 @@
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const MAX_PROMPT_CHARS = 12000;
 
-function serializeCase({ caseRow, entries, documents, notes, patterns, glossary }) {
+function serializeCase({ caseRow, entries, documents, notes, patterns, glossary, recordings = [] }) {
   const lines = [];
   lines.push(`Case: ${caseRow.title}`);
   if (caseRow.case_number) lines.push(`Case number: ${caseRow.case_number}`);
@@ -37,6 +37,17 @@ function serializeCase({ caseRow, entries, documents, notes, patterns, glossary 
   lines.push("\nDocuments on file:");
   if (!documents.length) lines.push("(none yet)");
   for (const d of documents) lines.push(`- ${d.title}${d.filed_date ? ` (filed ${d.filed_date})` : ""}`);
+
+  // Darius's own words, whether typed or spoken and transcribed (Whisper,
+  // via bench-transcribe.js) — a voice note not yet transcribed, or one
+  // with neither a typed body nor a transcript, has nothing to add here.
+  const recordingLines = recordings
+    .map((r) => ({ date: r.noted_at, content: r.body || r.transcript }))
+    .filter((r) => r.content);
+  if (recordingLines.length) {
+    lines.push("\nVoice notes and recordings about specific documents (the founder's own words, dated):");
+    for (const r of recordingLines) lines.push(`- ${r.date}: ${r.content}`);
+  }
 
   if (notes.length) {
     lines.push("\nNotes sent to the entrusted side:");

@@ -10,6 +10,7 @@ function emptyRecord(overrides = {}) {
     notes: [],
     patterns: [],
     glossary: [],
+    recordings: [],
     ...overrides,
   };
 }
@@ -64,4 +65,26 @@ test("documents alone (no entries yet) are still enough to summarize", async () 
   const record = emptyRecord({ documents: [{ title: "Motion.pdf", filed_date: "2026-09-28" }] });
   const { summary } = await summarizeCase({ AI: fakeAI }, record);
   assert.match(summary, /Overview/);
+});
+
+test("a voice note's transcript reaches the model, so the summary can actually improve as recordings are added", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({
+    documents: [{ title: "Motion.pdf", filed_date: "2026-09-28" }],
+    recordings: [{ noted_at: "2026-09-29", body: null, transcript: "TRANSCRIBED-VOICE-NOTE-CONTENT" }],
+  });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.match(sentPrompt, /TRANSCRIBED-VOICE-NOTE-CONTENT/);
+});
+
+test("a recording with no typed body and no transcript yet (transcription still pending, or failed) adds nothing to the prompt", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({
+    documents: [{ title: "Motion.pdf", filed_date: "2026-09-28" }],
+    recordings: [{ noted_at: "2026-09-29", body: null, transcript: null }],
+  });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.doesNotMatch(sentPrompt, /Voice notes/);
 });

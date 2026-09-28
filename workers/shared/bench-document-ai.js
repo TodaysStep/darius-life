@@ -1,9 +1,25 @@
 // Reads an uploaded document's own content to say what it is and find its
 // case number, so uploading is the only step Darius has to take — see
 // README.md's Bench Notes section. Two functions, deliberately separate:
-// extractPdfText (unpdf, not something worth testing here — it isn't this
-// repo's code) and classifyDocumentText (env.AI, the part that's actually
-// ours and worth testing with a fake AI binding).
+// extractPdfText (Cloudflare Workers AI's own toMarkdown utility, called
+// through the same env.AI binding classifyDocumentText already uses — not
+// something worth testing here, since it isn't this repo's code) and
+// classifyDocumentText (the part that's actually ours and worth testing
+// with a fake AI binding).
+//
+// extractPdfText used to shell out to unpdf, parsing the PDF's own bytes
+// in-process. That's real CPU work (decompression, content-stream
+// tokenizing) — and Workers on the Free plan get a hard, non-configurable
+// 10 ms CPU-time budget per request (Paid: 30s default, up to 5 min; the
+// override that raises it, `[limits] cpu_ms`, only takes effect on Paid).
+// A large or dense PDF could plausibly blow that 10 ms on Free, doing this
+// in-Worker — turning "upload a document" into something that silently
+// needs a paid plan to reliably finish. Calling env.AI.toMarkdown() instead
+// moves the actual parsing onto Cloudflare's own AI infrastructure: from
+// this Worker's perspective it's a network call (I/O wait, not CPU time),
+// billed in Neurons under the same free 10,000/day account allocation
+// classifyDocumentText already draws from — no Workers Paid plan required,
+// same as the rest of this file.
 //
 // The result's `source` is stored on the docket entry (docket_entries.source)
 // and shown as a visible tag in the UI — never silently indistinguishable
@@ -15,12 +31,13 @@
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const MAX_PROMPT_CHARS = 8000;
 
-// Above this, analysis is skipped entirely rather than attempted — pdf.js
-// needs to hold a parsed document in memory to read it, on top of whatever
-// holding the bytes themselves costs, and a Worker isolate has a hard
-// 128 MB ceiling (not per-request — shared, and unforgiving: exceeding it
-// gets the whole in-flight request killed, not a catchable error). This
-// threshold is deliberately well under that ceiling, not tuned to it.
+// Above this, analysis is skipped entirely rather than attempted — reading
+// this many bytes into memory to hand to toMarkdown, on top of whatever the
+// request itself already holds, risks the same 128 MB per-isolate memory
+// ceiling every other upload path in this file respects (shared across the
+// whole isolate, not per-request, and unforgiving: exceeding it kills the
+// in-flight request outright, not a catchable error). This threshold is
+// deliberately well under that ceiling, not tuned to it.
 export const MAX_ANALYZABLE_BYTES = 20 * 1024 * 1024;
 
 // Takes bytes directly (an ArrayBuffer already read from R2 or elsewhere),
@@ -28,16 +45,18 @@ export const MAX_ANALYZABLE_BYTES = 20 * 1024 * 1024;
 // many bytes into memory at all is safe (see MAX_ANALYZABLE_BYTES and how
 // the upload finalize route uses it, checking R2's own object size first
 // via head(), before ever fetching the bytes).
-export async function extractPdfText(bytes, filename, contentType) {
+export async function extractPdfText(env, bytes, filename, contentType) {
   const isPdf = (contentType || "").includes("pdf") || filename.toLowerCase().endsWith(".pdf");
   if (!isPdf) return "";
   try {
-    const { getDocumentProxy, extractText } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(bytes));
-    const { text } = await extractText(pdf, { mergePages: true });
-    return (text || "").trim();
+    const [result] = await env.AI.toMarkdown([
+      { name: filename, blob: new Blob([bytes], { type: "application/pdf" }) },
+    ]);
+    if (!result || result.format === "error") return "";
+    return (result.data || "").trim();
   } catch {
-    // A scanned, image-only PDF (no text layer) or a corrupt file — the
+    // A scanned, image-only PDF (no text layer), a corrupt file, or the
+    // account's free Neuron allocation running dry for the day — the
     // upload still proceeds; see classifyDocumentText's no-text branch.
     return "";
   }
@@ -114,6 +133,6 @@ export async function analyzeUploadedDocument(env, filename, contentType, size, 
     };
   }
   const bytes = await fetchBytes();
-  const text = await extractPdfText(bytes, filename, contentType);
+  const text = await extractPdfText(env, bytes, filename, contentType);
   return classifyDocumentText(env, text, filename);
 }

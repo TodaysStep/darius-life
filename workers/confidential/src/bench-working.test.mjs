@@ -39,12 +39,16 @@ async function validToken() {
 function setup(jwk) {
   const fakeD1 = createFakeD1();
   const fakeR2 = createFakeR2();
-  // Real .pdf bytes aren't valid PDFs here, so extractPdfText always throws
-  // and falls back to "unreadable" — this AI binding is never actually
-  // reached by an upload test in this file (bench-document-ai.test.mjs
-  // covers env.AI.run itself, decoupled from real PDF parsing). It's here
-  // so nothing throws "env.AI is not defined" if that ever changes.
-  const fakeAI = { run: async () => ({ response: JSON.stringify({ documentType: "unused", caseNumber: null }) }) };
+  // Real .pdf bytes aren't valid PDFs here, so toMarkdown always reports a
+  // conversion error and extraction falls back to "unreadable" — this AI
+  // binding is never actually reached by an upload test in this file
+  // (bench-document-ai.test.mjs covers env.AI.run/toMarkdown themselves,
+  // decoupled from real PDF/audio bytes). It's here so nothing throws
+  // "env.AI is not defined" if that ever changes.
+  const fakeAI = {
+    run: async () => ({ response: JSON.stringify({ documentType: "unused", caseNumber: null }) }),
+    toMarkdown: async ([file]) => [{ name: file.name, format: "error", error: "not a real PDF in this fake" }],
+  };
   globalThis.fetch = async (url) => {
     if (String(url) === `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`) return { ok: true, json: async () => ({ keys: [jwk] }) };
     throw new Error(`unexpected fetch: ${url}`);
@@ -465,6 +469,122 @@ test("adding a recording with audio but no typed note works, and the audio strea
   const fileRes = await handleBenchGet(authedRequest(`https://darius.life/bench/recordings/${recording.id}/file`, token), env, new URL(`https://darius.life/bench/recordings/${recording.id}/file`));
   assert.equal(fileRes.status, 200);
   assert.equal(await fileRes.text(), "the actual audio bytes");
+});
+
+test("adding a recording with audio transcribes it in the background, then regenerates the case summary with that transcript", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  let sentAudio = null;
+  let sentPrompt = "";
+  env.AI = {
+    run: async (model, opts) => {
+      if (model === "@cf/openai/whisper") { sentAudio = opts.audio; return { text: "Filed the response this morning." }; }
+      sentPrompt = opts.messages[0].content;
+      return { response: "Overview: a voice note is now on file." };
+    },
+  };
+
+  const { blobId, filename, contentType } = await putBlob(env, token, "voice.m4a", "audio/m4a", "the actual audio bytes");
+  const form = new URLSearchParams({ notedAt: "2026-09-28", blobId, filename, contentType });
+  const { ctx, drain } = stubCtx();
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"), ctx);
+  assert.equal(res.status, 303);
+
+  const recordingBefore = fakeD1.tables.document_recordings[0];
+  assert.ok(!recordingBefore.transcript); // not yet — the response didn't wait on it
+
+  await drain();
+  const recording = fakeD1.tables.document_recordings[0];
+  assert.equal(recording.transcript, "Filed the response this morning.");
+  assert.equal(recording.transcript_source, "auto");
+  assert.deepEqual(sentAudio, [...new TextEncoder().encode("the actual audio bytes")]);
+  assert.match(sentPrompt, /Filed the response this morning\./);
+  assert.match(fakeD1.tables.cases[0].ai_summary, /voice note/);
+});
+
+test("correcting a transcript saves the edit, tags it manual, and regenerates the case summary", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t", ai_summary: null, ai_summary_updated_at: null });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "2026-09-28", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", transcript: "Filed the responze this morning.", transcript_error: null, transcript_source: "auto", created_at: "t" });
+  let sentPrompt = "";
+  env.AI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+
+  const { ctx, drain } = stubCtx();
+  const form = new URLSearchParams({ transcript: "Filed the response this morning." });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/edit", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/edit"), ctx);
+  assert.equal(res.status, 303);
+
+  const recording = fakeD1.tables.document_recordings[0];
+  assert.equal(recording.transcript, "Filed the response this morning.");
+  assert.equal(recording.transcript_source, "manual");
+  await drain();
+  assert.match(sentPrompt, /Filed the response this morning\./);
+});
+
+test("saving an empty transcript correction is rejected — delete the recording instead if it's wrong entirely", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", transcript: "Something.", transcript_source: "auto", created_at: "t" });
+
+  const form = new URLSearchParams({ transcript: "" });
+  const req = authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/edit", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings/r1/edit"));
+  assert.equal(res.status, 400);
+  assert.equal(fakeD1.tables.document_recordings[0].transcript, "Something.");
+});
+
+test("a document can carry any number of recordings, added one at a time through the real routes — both typed and recorded", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const form1 = new URLSearchParams({ notedAt: "2026-09-01", body: "First thought." });
+  await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form1.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"),
+  );
+
+  const { blobId, filename, contentType } = await putBlob(env, token, "voice.m4a", "audio/m4a", "audio bytes two");
+  const form2 = new URLSearchParams({ notedAt: "2026-09-15", blobId, filename, contentType });
+  await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form2.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"),
+  );
+
+  assert.equal(fakeD1.tables.document_recordings.length, 2);
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-1", token), env, new URL("https://darius.life/bench/documents/doc-1"));
+  const html = await detail.text();
+  assert.match(html, /First thought\./);
+  assert.match(html, /2026-09-15/);
+  // The second form is still there after one is added — nothing caps it at one.
+  assert.match(html, /Add one/);
+});
+
+test("a recording's audio over the transcribable size ceiling is skipped, cheaply, without fetching its bytes", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1, fakeR2 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: null, audio_storage_ref: "bench-blobs/r1/voice.m4a", created_at: "t" });
+  await fakeR2.put("bench-blobs/r1/voice.m4a", "audio bytes");
+  const realHead = fakeR2.head.bind(fakeR2);
+  fakeR2.head = async (key) => ({ ...(await realHead(key)), size: 26 * 1024 * 1024 });
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { text: "should never be reached" }; } };
+
+  const { transcribeRecording } = await import("./bench-working.js");
+  await transcribeRecording(env, "r1");
+  assert.equal(calls, 0);
+  assert.ok(!fakeD1.tables.document_recordings[0].transcript);
 });
 
 test("a recording with neither a note nor audio is rejected — not neither", async () => {

@@ -86,9 +86,11 @@ Darius's own docket:
   **Uploading a document is the default way to start a bench note** — the
   case list's first form: pick a file, optionally add your own notes
   (private, never shared), upload. Nothing else. Bench Notes reads the
-  document itself (`workers/shared/bench-document-ai.js`, via Cloudflare
-  Workers AI — an account capability, no separate key) to say what the
-  document is and find its case number in the text, matching an existing
+  document itself (`workers/shared/bench-document-ai.js`, entirely via
+  Cloudflare Workers AI — an account capability, no separate key: both the
+  PDF-to-text step and the "what is this" classification step below) to
+  say what the document is and find its case number in the text, matching
+  an existing
   case by that number or starting a new one — Darius never types a
   description or picks a case. A fact that came from that read, not from
   Darius, is stored with `docket_entries.source` set to `upload-ai` (or
@@ -113,7 +115,21 @@ Darius's own docket:
   R2's own `head()` — no bytes fetched — and skips analysis entirely
   (`bench-document-ai.js`'s `MAX_ANALYZABLE_BYTES`, 20&nbsp;MB) rather than
   risk the same ceiling a second time trying to read a huge PDF's text.
-  This is also why the upload and document pages now load one small,
+  PDF text extraction itself used to shell out to `unpdf`, parsing the
+  PDF's own bytes in this Worker's process — real CPU work (decompression,
+  content-stream tokenizing), and the Workers **Free** plan caps CPU time
+  at a hard, non-configurable 10&nbsp;ms per request (Paid: 30s default, up
+  to 5&nbsp;min — the `[limits] cpu_ms` override that raises it only takes
+  effect on Paid). A dense or multi-page PDF could plausibly have blown
+  that 10&nbsp;ms doing this in-Worker, making "upload a document"
+  something that could silently need a paid plan to reliably finish.
+  `extractPdfText` now calls `env.AI.toMarkdown()` instead — Workers AI's
+  own document-conversion utility, through the same `env.AI` binding
+  classification already used: the actual parsing runs on Cloudflare's own
+  infrastructure, not this Worker's CPU, billed in Neurons under the same
+  free 10,000/day account allocation, no Workers Paid plan required. (See
+  "Runs entirely on the Workers Free plan" below.) This is also why the
+  upload and document pages now load one small,
   first-party script (`bench-client-script.js`, served same-origin at
   `/bench/static/bench.js`) under an explicit `script-src 'self'` CSP
   override — a browser form alone cannot `PUT` a raw body, and every
@@ -133,6 +149,25 @@ Darius's own docket:
   button captures audio via `MediaRecorder`, and on stop, uploads it
   exactly like a chosen file. Working-side only, like commentary — never
   shared, never entrusted-visible.
+- **Voice notes transcribe themselves.** Any recording with audio is
+  automatically transcribed in the background (`workers/shared/
+  bench-transcribe.js`, `@cf/openai/whisper` via `env.AI` — same account
+  capability, same free allocation as everything else here) right after
+  it's saved, then feeds straight into the case summary below, the same
+  way a new document or timeline entry does. The transcript is Darius's
+  own spoken words, mechanically converted — closer in kind to his typed
+  commentary than to an AI-authored summary — but speech recognition
+  still makes mistakes, especially names and case-specific terms, so it's
+  shown as a distinct, visibly tagged "auto-transcribed" layer under the
+  audio, correctable in place (a "Correct this transcript" form on each
+  recording): saving a correction flips the tag off, same "auto until a
+  human takes authorship" pattern as an entry's auto-extracted tag
+  clearing on edit. Audio over 25&nbsp;MB skips transcription — cheaply,
+  via R2's own `head()`, before ever fetching the bytes — since Whisper's
+  own real input limits aren't published and a personal voice note is
+  minutes, not hours, long; the recording and its audio are saved either
+  way, transcription is purely additive. A failed or skipped transcription
+  never loses the recording itself.
 - **Delete**, at every level, added because there was no way to remove a
   mistake or a test entry at all before this pass: a docket entry (its own
   documents become general instead of disappearing with it), a document
@@ -164,16 +199,20 @@ Darius's own docket:
   record — every timeline entry (including Darius's own commentary and
   recommended direction, which stay working-side-only, same as everywhere
   else in this file — never sent to the entrusted side), every document
-  title, every note sent to guests, every pattern and glossary term — into
-  one organized read: overview, chronological summary, documents on file,
-  and anything the record itself flags as upcoming. A case with nothing on
-  record yet gets no summary at all, not a hallucinated one. It regenerates
-  itself automatically, in the background (`regenerateCaseSummaryInBackground`,
+  title, every voice note's own content (a typed body, or a Whisper
+  transcript once one exists), every note sent to guests, every pattern
+  and glossary term — into one organized read: overview, chronological
+  summary, documents on file, and anything the record itself flags as
+  upcoming. A case with nothing on record yet gets no summary at all, not
+  a hallucinated one. It regenerates itself automatically, in the
+  background (`regenerateCaseSummaryInBackground`,
   via `ctx.waitUntil` so the write that triggered it never waits on an AI
   call) after any write that changes what's on record — a new or edited or
   deleted entry, a new document or deleted one, a new glossary term or
-  pattern, a new or deleted recording — so it keeps improving as the case
-  file grows, the way rereading your own notes would. Sharing, unsharing,
+  pattern, a new recording (once its transcription finishes, chained in
+  the same background task — see `transcribeAndRegenerateInBackground`)
+  or a deleted one — so it keeps improving as the case file grows, the way
+  rereading your own notes would. Sharing, unsharing,
   and deleting the case itself don't trigger it, since neither changes the
   underlying facts (deleting the case removes the summary along with
   everything else). A **"Refresh summary now"** button on the case page
@@ -186,6 +225,26 @@ Darius's own docket:
   the upload reader already uses, no separate key) — a general-purpose
   model, not a legal one, so its output is an organizing aid, never
   authority.
+- **Runs entirely on the Workers Free plan — no Workers Paid plan
+  required, anywhere in Bench Notes.** Checked directly against
+  Cloudflare's own current published limits, not assumed: neither Worker's
+  `wrangler.toml` declares Durable Objects, Queues, or a `[limits] cpu_ms`
+  override (the last of which only takes effect on Paid anyway — Free is a
+  hard, non-configurable 10&nbsp;ms CPU-time cap per request). All four AI
+  operations here — document classification, PDF-to-text (`toMarkdown`),
+  case summarization, and voice-note transcription (`whisper`) — run
+  through the same `env.AI` binding and draw from the same 10,000-Neuron
+  free daily account allocation; none of the four models/utilities used is
+  on Cloudflare's Paid-plan-only model list. Every one of those calls is
+  already wrapped in its own try/catch that degrades gracefully on
+  failure (a null summary, an "upload-ai-failed" tag, a skipped
+  transcript) rather than crashing — so even the one real shared-budget
+  risk (a very heavy single day exhausting the 10,000-Neuron allocation
+  before midnight UTC) fails soft, not hard: the write itself always
+  still succeeds, only that day's AI enrichment doesn't. R2 and D1 are
+  billed independently of the Workers plan and have their own generous
+  free tiers (10&nbsp;GB R2 storage, 5&nbsp;GB D1 storage) well beyond a
+  personal caseload's real size.
 
 Data lives in Cloudflare D1, never this repo. Gated by a pre-existing
 Cloudflare Access application ("confidential legal area," policy "Allowed

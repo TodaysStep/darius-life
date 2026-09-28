@@ -44,9 +44,38 @@ test("a model failure (thrown error, or unparseable response) never fabricates a
   assert.equal(r2.caseNumber, null);
 });
 
-test("a non-PDF file is never sent to unpdf at all — extractPdfText returns empty text immediately", async () => {
+test("a non-PDF file is never sent to toMarkdown at all — extractPdfText returns empty text immediately", async () => {
+  const fakeAI = { toMarkdown: async () => { throw new Error("should never be called"); } };
   const bytes = new TextEncoder().encode("plain text content").buffer;
-  const text = await extractPdfText(bytes, "notes.txt", "text/plain");
+  const text = await extractPdfText({ AI: fakeAI }, bytes, "notes.txt", "text/plain");
+  assert.equal(text, "");
+});
+
+test("a real PDF's bytes are handed to env.AI.toMarkdown, and its converted text is returned", async () => {
+  let seen = null;
+  const fakeAI = {
+    toMarkdown: async (files) => {
+      seen = files;
+      return [{ name: files[0].name, format: "markdown", mimetype: "application/pdf", tokens: 12, data: "# motion.pdf\n\nSome extracted text." }];
+    },
+  };
+  const bytes = new TextEncoder().encode("%PDF-1.4 fake bytes").buffer;
+  const text = await extractPdfText({ AI: fakeAI }, bytes, "motion.pdf", "application/pdf");
+  assert.equal(text, "# motion.pdf\n\nSome extracted text.");
+  assert.equal(seen[0].name, "motion.pdf");
+});
+
+test("toMarkdown reporting a conversion error (e.g. a scanned image with nothing extractable) is a clean empty result, never a thrown exception", async () => {
+  const fakeAI = { toMarkdown: async () => [{ name: "scan.pdf", format: "error", error: "unsupported content" }] };
+  const bytes = new TextEncoder().encode("%PDF-1.4").buffer;
+  const text = await extractPdfText({ AI: fakeAI }, bytes, "scan.pdf", "application/pdf");
+  assert.equal(text, "");
+});
+
+test("a thrown error from toMarkdown (e.g. the daily free Neuron allocation running dry) never crashes the upload", async () => {
+  const fakeAI = { toMarkdown: async () => { throw new Error("out of capacity"); } };
+  const bytes = new TextEncoder().encode("%PDF-1.4").buffer;
+  const text = await extractPdfText({ AI: fakeAI }, bytes, "motion.pdf", "application/pdf");
   assert.equal(text, "");
 });
 

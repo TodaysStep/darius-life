@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addDocumentRecording, benchBlobKey, deleteCase, deleteDocument, deleteDocumentRecording, deleteEntry,
-  findOrCreateCaseByNumber, listCaseBlobRefs, listDocumentBlobRefs, listDocumentRecordings,
+  editRecordingTranscript, findOrCreateCaseByNumber, listCaseBlobRefs, listCaseRecordings, listDocumentBlobRefs,
+  listDocumentRecordings, updateRecordingTranscript,
 } from "./bench-data.js";
 import { createFakeD1 } from "./test-fake-d1.mjs";
 
@@ -57,6 +58,44 @@ test("a document can carry any number of dated recordings/notes, listed newest-n
   assert.equal(rows[0].id, "r2");
   assert.equal(rows[0].audio_duration_seconds, 42);
   assert.equal(rows[1].body, "First thought.");
+});
+
+test("listCaseRecordings gathers recordings across every document in the case, newest-noted first", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Notice", storage_kind: "upload", storage_ref: "k2", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-3", case_id: "case-2", case_label: "Y", title: "Unrelated", storage_kind: "upload", storage_ref: "k3", shared_at: null, created_at: "t" });
+
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "2026-09-01", body: "About the motion." });
+  await addDocumentRecording(BENCH_NOTES, { id: "r2", documentId: "doc-2", caseId: "case-1", notedAt: "2026-09-15", body: "About the notice." });
+  await addDocumentRecording(BENCH_NOTES, { id: "r3", documentId: "doc-3", caseId: "case-2", notedAt: "2026-09-20", body: "A different case entirely." });
+
+  const rows = await listCaseRecordings(BENCH_NOTES, "case-1");
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.id), ["r2", "r1"]);
+});
+
+test("updateRecordingTranscript stores the transcript and tags it auto — a Whisper read, not Darius's own typed word", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", audioStorageRef: "bench-blobs/r1/voice.m4a" });
+
+  await updateRecordingTranscript(BENCH_NOTES, "r1", "Filed the response this morning.", null);
+  const row = tables.document_recordings[0];
+  assert.equal(row.transcript, "Filed the response this morning.");
+  assert.equal(row.transcript_error, null);
+  assert.equal(row.transcript_source, "auto");
+});
+
+test("editRecordingTranscript overwrites a correction and flips the tag to manual, clearing any prior error", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", audioStorageRef: "bench-blobs/r1/voice.m4a" });
+  await updateRecordingTranscript(BENCH_NOTES, "r1", "Filed the responze this morning.", null);
+
+  await editRecordingTranscript(BENCH_NOTES, "r1", "Filed the response this morning.");
+  const row = tables.document_recordings[0];
+  assert.equal(row.transcript, "Filed the response this morning.");
+  assert.equal(row.transcript_error, null);
+  assert.equal(row.transcript_source, "manual");
 });
 
 test("deleting an entry never deletes a document attached to it — it becomes a general document instead", async () => {

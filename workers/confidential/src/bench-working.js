@@ -40,6 +40,7 @@ import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
 import { summarizeCase } from "../../shared/bench-case-summary.js";
+import { MAX_TRANSCRIBABLE_BYTES, transcribeAudio } from "../../shared/bench-transcribe.js";
 import { BENCH_CLIENT_JS } from "./bench-client-script.js";
 
 export const PREFIX = "/bench/";
@@ -81,9 +82,11 @@ const addDocument = (env, fields) => data.addDocument(env.BENCH_NOTES, fields);
 const setDocumentShared = (env, id, shared) => data.setDocumentShared(env.BENCH_NOTES, id, shared);
 const listEntrustedNotes = (env, caseId) => data.listEntrustedNotes(env.BENCH_NOTES, caseId);
 const listDocumentRecordings = (env, documentId) => data.listDocumentRecordings(env.BENCH_NOTES, documentId);
+const listCaseRecordings = (env, caseId) => data.listCaseRecordings(env.BENCH_NOTES, caseId);
 const addDocumentRecording = (env, fields) => data.addDocumentRecording(env.BENCH_NOTES, fields);
 const getDocumentRecording = (env, id) => data.getDocumentRecording(env.BENCH_NOTES, id);
 const deleteDocumentRecording = (env, id) => data.deleteDocumentRecording(env.BENCH_NOTES, id);
+const editRecordingTranscript = (env, id, transcript) => data.editRecordingTranscript(env.BENCH_NOTES, id, transcript);
 const deleteEntry = (env, id) => data.deleteEntry(env.BENCH_NOTES, id);
 
 // Every R2 delete below is best-effort: if a key is already gone (or the
@@ -114,14 +117,15 @@ async function deleteCaseAndBlobs(env, caseId) {
 export async function regenerateCaseSummary(env, caseId) {
   const caseRow = await getCase(env, caseId);
   if (!caseRow) return;
-  const [entries, documents, notes, patterns, glossary] = await Promise.all([
+  const [entries, documents, notes, patterns, glossary, recordings] = await Promise.all([
     listEntries(env, caseId),
     listDocuments(env, caseId),
     listEntrustedNotes(env, caseId),
     listPatterns(env, caseId),
     listGlossary(env, caseId),
+    listCaseRecordings(env, caseId),
   ]);
-  const { summary } = await summarizeCase(env, { caseRow, entries, documents, notes, patterns, glossary });
+  const { summary } = await summarizeCase(env, { caseRow, entries, documents, notes, patterns, glossary, recordings });
   if (summary) await data.updateCaseSummary(env.BENCH_NOTES, caseId, summary);
 }
 
@@ -133,6 +137,38 @@ export async function regenerateCaseSummary(env, caseId) {
 // alive for its own assertions.
 function regenerateCaseSummaryInBackground(env, ctx, caseId) {
   const task = regenerateCaseSummary(env, caseId).catch(() => {});
+  if (ctx?.waitUntil) ctx.waitUntil(task);
+  return task;
+}
+
+// Reads a recording's own audio from R2 and asks bench-transcribe.js to
+// turn it into text — the one place that happens, called right after a
+// recording with audio is added. Never throws: a failed or skipped
+// transcription just leaves transcript/transcript_error null/set and the
+// recording itself untouched — audio is never lost over a transcription
+// failure, same "best-effort, never blocks the write that triggered it"
+// contract as regenerateCaseSummary.
+export async function transcribeRecording(env, recordingId) {
+  const recording = await getDocumentRecording(env, recordingId);
+  if (!recording?.audio_storage_ref) return;
+  const head = await env.BENCH_DOCUMENTS.head(recording.audio_storage_ref);
+  if (!head || head.size > MAX_TRANSCRIBABLE_BYTES) return;
+  const object = await env.BENCH_DOCUMENTS.get(recording.audio_storage_ref);
+  if (!object) return;
+  const bytes = await object.arrayBuffer();
+  const { transcript, error } = await transcribeAudio(env, bytes);
+  await data.updateRecordingTranscript(env.BENCH_NOTES, recordingId, transcript, error);
+}
+
+// Transcription, then a case summary regeneration once the transcript is
+// there to inform it — chained so a voice note's own content reaches the
+// summary without a second write. ctx.waitUntil, same non-blocking pattern
+// as regenerateCaseSummaryInBackground.
+function transcribeAndRegenerateInBackground(env, ctx, recordingId, caseId) {
+  const task = transcribeRecording(env, recordingId)
+    .catch(() => {})
+    .then(() => regenerateCaseSummary(env, caseId))
+    .catch(() => {});
   if (ctx?.waitUntil) ctx.waitUntil(task);
   return task;
 }
@@ -314,11 +350,32 @@ function formatDuration(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// The transcript is Whisper's own read of the audio above it, not
+// something Darius typed — tagged "auto-transcribed" the same way an
+// upload-read docket entry is, until he corrects it (see the edit form
+// below and bench-data.js's editRecordingTranscript), at which point the
+// tag drops just like an entry's does on edit.
+function renderTranscript(base, r) {
+  if (!r.audio_storage_ref) return "";
+  if (r.transcript) {
+    const tag = r.transcript_source === "manual" ? "" : `<span class="status">auto-transcribed</span>`;
+    return `<div class="entry-layer"><span class="layer-name">Transcript</span>${tag}${escapeHtml(r.transcript)}</div>
+<details><summary>Correct this transcript</summary>
+<form method="post" action="${base}/recordings/${escapeHtml(r.id)}/edit">
+<textarea name="transcript" required>${escapeHtml(r.transcript)}</textarea>
+<button type="submit">Save correction</button>
+</form></details>`;
+  }
+  if (r.transcript_error) return `<p class="hint">Transcription didn't complete — the audio itself is still saved above.</p>`;
+  return `<p class="hint">Transcribing…</p>`;
+}
+
 function renderRecordingRow(base, r) {
   const audio = r.audio_storage_ref
     ? `<audio controls src="${PREFIX}recordings/${escapeHtml(r.id)}/file" style="width:100%;margin-top:0.5em"></audio>${r.audio_duration_seconds ? `<span class="hint">${formatDuration(r.audio_duration_seconds)}</span>` : ""}`
     : "";
   return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}
+${renderTranscript(base, r)}
 <form method="post" action="${base}/recordings/${escapeHtml(r.id)}/delete"><button type="submit">Delete</button></form>
 </div>`;
 }
@@ -848,8 +905,9 @@ export async function handleBenchPost(request, env, url, ctx) {
         audioMimeType = form.get("contentType") || "application/octet-stream";
       }
 
+      const recordingId = crypto.randomUUID();
       await addDocumentRecording(env, {
-        id: crypto.randomUUID(),
+        id: recordingId,
         documentId: docId,
         caseId,
         notedAt,
@@ -857,6 +915,27 @@ export async function handleBenchPost(request, env, url, ctx) {
         audioStorageRef,
         audioMimeType,
       });
+      // Audio gets transcribed first, then the case summary regenerates
+      // once the transcript is there to inform it — a typed-only note has
+      // nothing to transcribe, so it just regenerates directly.
+      if (audioStorageRef) transcribeAndRegenerateInBackground(env, ctx, recordingId, caseId);
+      else regenerateCaseSummaryInBackground(env, ctx, caseId);
+      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+    }
+
+    // Correcting a Whisper transcription mistake — same "auto until Darius
+    // takes authorship" pattern as a docket entry's edit clearing its
+    // auto-extracted tag. New context, so it regenerates the case summary
+    // same as adding one in the first place.
+    const recordingEditMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings\/([^/]+)\/edit$/);
+    if (recordingEditMatch) {
+      const [, caseId, docId, recordingId] = recordingEditMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      const recording = await getDocumentRecording(env, recordingId);
+      if (!recording || recording.document_id !== docId) return notFound();
+      const transcript = form.get("transcript");
+      if (!transcript) return html(errorPage("A transcript can't be saved empty — delete the recording instead if it's wrong entirely."), 400);
+      await editRecordingTranscript(env, recordingId, transcript);
       regenerateCaseSummaryInBackground(env, ctx, caseId);
       return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
     }

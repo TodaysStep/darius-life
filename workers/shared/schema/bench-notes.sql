@@ -132,6 +132,17 @@ CREATE TABLE IF NOT EXISTS document_recordings (
   audio_storage_ref       TEXT,            -- an R2 key (bench-data.js's benchBlobKey), never a URL
   audio_mime_type         TEXT,
   audio_duration_seconds  INTEGER,
+  -- bench-transcribe.js's own read of audio_storage_ref, via Cloudflare
+  -- Workers AI's Whisper model, regenerated in the background after each
+  -- upload/recording — see bench-working.js's transcribeRecordingInBackground.
+  -- Darius's own spoken words, mechanically converted, but speech
+  -- recognition still makes mistakes, so it stays a distinct, correctable
+  -- layer: transcript_source is "auto" until he edits it, then "manual" —
+  -- same pattern as docket_entries.source for an auto-extracted fact.
+  -- Null until transcription runs or if there's no audio to transcribe.
+  transcript              TEXT,
+  transcript_error        TEXT,
+  transcript_source       TEXT,
   created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_document_recordings_document ON document_recordings(document_id, noted_at);
