@@ -69,6 +69,16 @@ export async function deleteCase(db, caseId) {
   const docIds = docs.map((d) => d.id);
   if (docIds.length) {
     const placeholders = docIds.map(() => "?").join(",");
+    const { results: recordings } = await db.prepare(`SELECT id FROM document_recordings WHERE document_id IN (${placeholders})`).bind(...docIds).all();
+    const recordingIds = recordings.map((r) => r.id);
+    // Deleting by recording_id alone is enough: the "also affects" picker
+    // (bench-working.js's recording form) only ever offers documents from
+    // the same case, so every recording_documents row this case could own
+    // has a recording_id rooted in one of these recordings.
+    if (recordingIds.length) {
+      const recordingPlaceholders = recordingIds.map(() => "?").join(",");
+      await db.prepare(`DELETE FROM recording_documents WHERE recording_id IN (${recordingPlaceholders})`).bind(...recordingIds).run();
+    }
     await db.prepare(`DELETE FROM document_recordings WHERE document_id IN (${placeholders})`).bind(...docIds).run();
   }
   await db.prepare("DELETE FROM documents WHERE case_id = ?").bind(caseId).run();
@@ -297,6 +307,13 @@ export async function listDocumentBlobRefs(db, documentId) {
 }
 
 export async function deleteDocument(db, id) {
+  const { results: recordings } = await db.prepare("SELECT id FROM document_recordings WHERE document_id = ?").bind(id).all();
+  const recordingIds = recordings.map((r) => r.id);
+  if (recordingIds.length) {
+    const placeholders = recordingIds.map(() => "?").join(",");
+    await db.prepare(`DELETE FROM recording_documents WHERE recording_id IN (${placeholders})`).bind(...recordingIds).run();
+  }
+  await db.prepare("DELETE FROM recording_documents WHERE document_id = ?").bind(id).run();
   await db.prepare("DELETE FROM document_recordings WHERE document_id = ?").bind(id).run();
   await db.prepare("DELETE FROM documents WHERE id = ?").bind(id).run();
 }
@@ -315,11 +332,19 @@ export async function listDocumentRecordings(db, documentId) {
   return results;
 }
 
-export async function addDocumentRecording(db, { id, documentId, caseId, notedAt, body, audioStorageRef, audioMimeType, audioDurationSeconds }) {
+// contentType: what kind of input this actually is (note | correction |
+// contradiction | update) — Darius's own explicit choice, never inferred;
+// see document_recordings.content_type's own schema comment. relatedEntryId
+// optionally points at one existing docket entry this is about/corrects.
+// affectedDocumentIds is a separate concern entirely — see
+// setRecordingAffectedDocuments below, called by the caller right after
+// this, not folded in here, so a recording always exists in D1 before
+// anything tries to link it to other documents.
+export async function addDocumentRecording(db, { id, documentId, caseId, notedAt, body, audioStorageRef, audioMimeType, audioDurationSeconds, contentType, relatedEntryId }) {
   await db.prepare(
-    `INSERT INTO document_recordings (id, document_id, case_id, noted_at, body, audio_storage_ref, audio_mime_type, audio_duration_seconds)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, documentId, caseId, notedAt, body || null, audioStorageRef || null, audioMimeType || null, audioDurationSeconds || null).run();
+    `INSERT INTO document_recordings (id, document_id, case_id, noted_at, body, audio_storage_ref, audio_mime_type, audio_duration_seconds, content_type, related_entry_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, documentId, caseId, notedAt, body || null, audioStorageRef || null, audioMimeType || null, audioDurationSeconds || null, contentType || "note", relatedEntryId || null).run();
 }
 
 export async function getDocumentRecording(db, id) {
@@ -327,7 +352,44 @@ export async function getDocumentRecording(db, id) {
 }
 
 export async function deleteDocumentRecording(db, id) {
+  await db.prepare("DELETE FROM recording_documents WHERE recording_id = ?").bind(id).run();
   await db.prepare("DELETE FROM document_recordings WHERE id = ?").bind(id).run();
+}
+
+// "An update that affects multiple documents differently" doesn't fit a
+// single foreign key, so a recording's *additional* affected documents
+// (beyond the one it's primarily attached to, documentId above) live in
+// their own join table — see recording_documents's own schema comment.
+// Called once, right after addDocumentRecording, with the full set for
+// this recording (never incremental) — a fresh recording has no prior
+// links to worry about overwriting.
+export async function setRecordingAffectedDocuments(db, recordingId, documentIds) {
+  for (const documentId of documentIds) {
+    await db.prepare("INSERT INTO recording_documents (recording_id, document_id) VALUES (?, ?)").bind(recordingId, documentId).run();
+  }
+}
+
+// The documents (beyond its own primary one) a recording says it also
+// affects — shown on the recording itself so its full reach is visible
+// in one place.
+export async function listRecordingAffectedDocuments(db, recordingId) {
+  const { results: links } = await db.prepare("SELECT document_id FROM recording_documents WHERE recording_id = ?").bind(recordingId).all();
+  if (!links.length) return [];
+  const placeholders = links.map(() => "?").join(",");
+  const { results } = await db.prepare(`SELECT id, title FROM documents WHERE id IN (${placeholders})`).bind(...links.map((l) => l.document_id)).all();
+  return results;
+}
+
+// The reverse view, shown on a document's own page: recordings primarily
+// about some OTHER document that name this one as also affected — so a
+// document shows every voice note that touches it, not just the ones
+// filed directly under it.
+export async function listDocumentAffectingRecordings(db, documentId) {
+  const { results: links } = await db.prepare("SELECT recording_id FROM recording_documents WHERE document_id = ?").bind(documentId).all();
+  if (!links.length) return [];
+  const placeholders = links.map(() => "?").join(",");
+  const { results } = await db.prepare(`SELECT * FROM document_recordings WHERE id IN (${placeholders})`).bind(...links.map((l) => l.recording_id)).all();
+  return results;
 }
 
 // Every recording across every document in a case, for bench-case-summary.js
@@ -424,4 +486,57 @@ export async function revokeGrant(db, id) {
 
 export async function updateGrantPassphrase(db, id, newCodeHash) {
   await db.prepare("UPDATE access_grants SET code_hash = ? WHERE id = ?").bind(newCodeHash, id).run();
+}
+
+// --- Global search ---
+//
+// Fetches whole tables and filters in JS, rather than pushing a LIKE (or
+// an FTS5 virtual table) down into SQL. Two reasons: a personal caseload
+// is small — dozens to low hundreds of rows per table, not millions — so
+// this costs nothing real; and it needs no LIKE/MATCH support at all from
+// D1 or from test-fake-d1.mjs's own deliberately minimal WHERE parser
+// (equality, IN, IS [NOT] NULL only). Same "fetch broadly, filter in JS"
+// tradeoff listUpcomingEntries already makes for its own date comparison.
+function matchesQuery(query, ...fields) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return fields.some((f) => f != null && String(f).toLowerCase().includes(q));
+}
+
+// query: free text, matched case-insensitively as a substring across every
+// searchable field of every table below. contentType/entryKind: optional
+// filters applied on top (or alone, with no query at all, to just browse
+// every recording of one content_type or every entry of one entry_kind
+// across every case — "searchable by type" without needing any text).
+// Every row comes back with its case's own title attached, since results
+// span every case at once.
+export async function searchAll(db, { query, contentType, entryKind } = {}) {
+  const [cases, entries, documents, recordings, glossary, patterns, notes] = await Promise.all([
+    db.prepare("SELECT * FROM cases").all().then((r) => r.results),
+    db.prepare("SELECT * FROM docket_entries").all().then((r) => r.results),
+    db.prepare("SELECT * FROM documents").all().then((r) => r.results),
+    db.prepare("SELECT * FROM document_recordings").all().then((r) => r.results),
+    db.prepare("SELECT * FROM glossary_terms").all().then((r) => r.results),
+    db.prepare("SELECT * FROM patterns").all().then((r) => r.results),
+    db.prepare("SELECT * FROM entrusted_notes").all().then((r) => r.results),
+  ]);
+  const caseTitleById = new Map(cases.map((c) => [c.id, c.title]));
+  const documentTitleById = new Map(documents.map((d) => [d.id, d.title]));
+  const withCaseTitle = (row) => ({ ...row, case_title: caseTitleById.get(row.case_id) || null });
+
+  return {
+    cases: cases.filter((c) => matchesQuery(query, c.title, c.case_number, c.court)),
+    entries: entries
+      .filter((e) => !entryKind || e.entry_kind === entryKind)
+      .filter((e) => matchesQuery(query, e.fact, e.recommended_direction, e.commentary, e.court_takeaways))
+      .map(withCaseTitle),
+    documents: documents.filter((d) => matchesQuery(query, d.title)).map(withCaseTitle),
+    recordings: recordings
+      .filter((r) => !contentType || r.content_type === contentType)
+      .filter((r) => matchesQuery(query, r.body, r.transcript))
+      .map((r) => ({ ...withCaseTitle(r), document_title: documentTitleById.get(r.document_id) || null })),
+    glossary: glossary.filter((g) => matchesQuery(query, g.term, g.definition)),
+    patterns: patterns.filter((p) => matchesQuery(query, p.subject_name, p.description)).map(withCaseTitle),
+    notes: notes.filter((n) => matchesQuery(query, n.body)).map(withCaseTitle),
+  };
 }

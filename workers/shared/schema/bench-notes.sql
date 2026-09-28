@@ -175,9 +175,39 @@ CREATE TABLE IF NOT EXISTS document_recordings (
   transcript              TEXT,
   transcript_error        TEXT,
   transcript_source       TEXT,
+  -- What kind of input this actually is, chosen explicitly by Darius (a
+  -- select field, right alongside the note/audio itself) — never inferred
+  -- from the text or transcript. note (the default, a plain observation) |
+  -- correction (fixing something already on record) | contradiction
+  -- (flagging that this conflicts with something he said before) | update
+  -- (new development). Drives search/filtering (bench-data.js's
+  -- searchAll) and shows as a visible tag, same as docket_entries.
+  -- entry_kind for hearings/deadlines — a different axis (this is about
+  -- the input's own nature, not timing).
+  content_type            TEXT NOT NULL DEFAULT 'note',
+  -- What this recording is about/corrects, if anything specific — an
+  -- optional pointer to one existing docket entry, same "attach to an
+  -- entry" convention documents.entry_id already uses. Most useful with
+  -- content_type = "correction" or "contradiction", but never required.
+  related_entry_id        TEXT REFERENCES docket_entries(id),
   created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_document_recordings_document ON document_recordings(document_id, noted_at);
+
+-- A voice note's primary home is document_recordings.document_id (where
+-- it's added from, and where it's shown by default) — this table is only
+-- for the *additional* documents one recording also affects, since "an
+-- update that affects multiple documents differently" doesn't fit a
+-- single foreign key. Each document a recording affects is meant to show
+-- that recording cross-referenced on its own page too (see
+-- bench-data.js's listDocumentAffectingRecordings), while the recording
+-- itself still lives under its one primary document.
+CREATE TABLE IF NOT EXISTS recording_documents (
+  recording_id TEXT NOT NULL REFERENCES document_recordings(id),
+  document_id  TEXT NOT NULL REFERENCES documents(id),
+  PRIMARY KEY (recording_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_recording_documents_document ON recording_documents(document_id);
 
 -- Occasional notes Darius writes directly to the entrusted side — distinct
 -- from commentary (working-side, never shared). Also manual, also never

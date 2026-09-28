@@ -1021,3 +1021,113 @@ test("adding a resource without a name is rejected and writes nothing", async ()
   assert.equal(res.status, 400);
   assert.equal(fakeD1.tables.resources.length, 0);
 });
+
+// --- Voice-note categorization ---
+
+test("a recording can be tagged as a correction, related to a prior entry, and marked as also affecting another document — all shown on the document page", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "2026-09-01", fact: "Said the hearing was on the 10th.", entry_kind: "note", source: "manual", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Response.pdf", storage_kind: "upload", storage_ref: "k2", shared_at: null, created_at: "t" });
+
+  const form = new URLSearchParams({
+    notedAt: "2026-09-28",
+    body: "Actually the hearing is on the 15th, not the 10th — this changes the response deadline too.",
+    noteContentType: "correction",
+    relatedEntryId: "e1",
+    affectedDocumentIds: "doc-2",
+  });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"),
+  );
+  assert.equal(res.status, 303);
+  const recording = fakeD1.tables.document_recordings[0];
+  assert.equal(recording.content_type, "correction");
+  assert.equal(recording.related_entry_id, "e1");
+  assert.equal(fakeD1.tables.recording_documents.length, 1);
+  assert.equal(fakeD1.tables.recording_documents[0].document_id, "doc-2");
+
+  const doc1 = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-1", token), env, new URL("https://darius.life/bench/documents/doc-1"));
+  const doc1Html = await doc1.text();
+  assert.match(doc1Html, /correction/);
+  assert.match(doc1Html, /Relates to: 2026-09-01/);
+  assert.match(doc1Html, /Also affects.*Response\.pdf/s);
+
+  const doc2 = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-2", token), env, new URL("https://darius.life/bench/documents/doc-2"));
+  const doc2Html = await doc2.text();
+  assert.match(doc2Html, /Also mentioned in/);
+  assert.match(doc2Html, /Actually the hearing is on the 15th/);
+});
+
+test("a plain note (no content type chosen) defaults to note and shows no tag", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const form = new URLSearchParams({ notedAt: "2026-09-28", body: "Just a thought." });
+  await handleBenchPost(
+    authedRequest("https://darius.life/bench/case/case-1/documents/doc-1/recordings", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/case/case-1/documents/doc-1/recordings"),
+  );
+  assert.equal(fakeD1.tables.document_recordings[0].content_type, "note");
+  assert.equal(fakeD1.tables.recording_documents.length, 0);
+});
+
+// --- Global search ---
+
+test("GET /bench/search with no query shows just the form, not every record in the system", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Smith Family Matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/search", token), env, new URL("https://darius.life/bench/search"));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.doesNotMatch(html, /Smith Family Matter/);
+});
+
+test("GET /bench/search?q=... finds matches across cases, entries, documents, and recordings, each linking back to where it lives", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Smith Family Matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "2026-09-01", fact: "Filed the restraining order request.", entry_kind: "note", source: "manual", created_at: "t", updated_at: "t" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Restraining order.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/search?q=restraining", token), env, new URL("https://darius.life/bench/search?q=restraining"));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Filed the restraining order request\./);
+  assert.match(html, /Restraining order\.pdf/);
+  assert.match(html, /href="\/bench\/case\/case-1"/);
+});
+
+test("GET /bench/search?contentType=correction browses every correction across every case, with no text search needed", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: "A plain note.", content_type: "note", created_at: "t" });
+  fakeD1.tables.document_recordings.push({ id: "r2", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: "Fixing something I got wrong.", content_type: "correction", created_at: "t" });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/search?contentType=correction", token), env, new URL("https://darius.life/bench/search?contentType=correction"));
+  const html = await res.text();
+  assert.match(html, /Fixing something I got wrong\./);
+  assert.doesNotMatch(html, /A plain note\./);
+});
+
+test("a search with no matches says so plainly, not silently blank", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/search?q=nothing-will-match-this", token), env, new URL("https://darius.life/bench/search?q=nothing-will-match-this"));
+  const html = await res.text();
+  assert.match(html, /Nothing matched\./);
+});
+
+test("the case list links to search", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  assert.match(await res.text(), /bench\/search/);
+});

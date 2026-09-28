@@ -120,3 +120,28 @@ test("a document's filing/service status is stated exactly as given, never impli
   assert.match(sentPrompt, /Response\.pdf \(filed 2026-09-15\)/);
   assert.match(sentPrompt, /Notice\.pdf \(served 2026-09-20\)/);
 });
+
+test("a correction/contradiction recording is tagged explicitly in the prompt, distinct from a plain voice note", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({
+    documents: [{ title: "Motion.pdf" }],
+    recordings: [
+      { noted_at: "2026-09-28", content_type: "correction", body: "Actually the hearing is on the 15th." },
+      { noted_at: "2026-09-29", content_type: "contradiction", body: "This conflicts with what I said before." },
+      { noted_at: "2026-09-30", content_type: "note", body: "Just a plain thought." },
+    ],
+  });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.match(sentPrompt, /2026-09-28 \[CORRECTION\]: Actually the hearing is on the 15th\./);
+  assert.match(sentPrompt, /2026-09-29 \[CONTRADICTION\]: This conflicts with what I said before\./);
+  assert.match(sentPrompt, /2026-09-30: Just a plain thought\./);
+});
+
+test("the prompt tells the model never to resolve a contradiction itself, only to report that one exists", async () => {
+  let sentPrompt = "";
+  const fakeAI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "ok" }; } };
+  const record = emptyRecord({ documents: [{ title: "Motion.pdf" }] });
+  await summarizeCase({ AI: fakeAI }, record);
+  assert.match(sentPrompt, /[Nn]ever silently resolve a contradiction/);
+});

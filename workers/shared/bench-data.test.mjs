@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import {
   addDocument, addDocumentRecording, addEntry, addResource, benchBlobKey, deleteCase, deleteDocument,
   deleteDocumentRecording, deleteEntry, deleteResource, editRecordingTranscript, findOrCreateCaseByNumber,
-  listCaseBlobRefs, listCaseRecordings, listDocumentBlobRefs, listDocumentRecordings,
-  listResources, listUpcomingEntries, markDocumentFiled, markDocumentServed, updateCaseLocalRules, updateEntry,
+  listCaseBlobRefs, listCaseRecordings, listDocumentAffectingRecordings, listDocumentBlobRefs,
+  listDocumentRecordings, listRecordingAffectedDocuments, listResources, listUpcomingEntries, markDocumentFiled,
+  markDocumentServed, searchAll, setRecordingAffectedDocuments, updateCaseLocalRules, updateEntry,
   updateRecordingTranscript,
 } from "./bench-data.js";
 import { createFakeD1 } from "./test-fake-d1.mjs";
@@ -221,6 +222,114 @@ test("resources: add, list (oldest first), and delete — a plain Darius-curated
   await deleteResource(BENCH_NOTES, "r1");
   assert.equal(tables.resources.length, 1);
   assert.equal(tables.resources[0].id, "r2");
+});
+
+// --- Voice-note categorization ---
+
+test("addDocumentRecording defaults content_type to note, but stores correction/contradiction/update explicitly when given", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "Just an observation." });
+  await addDocumentRecording(BENCH_NOTES, { id: "r2", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "Actually I got the date wrong.", contentType: "correction" });
+  assert.equal(tables.document_recordings[0].content_type, "note");
+  assert.equal(tables.document_recordings[1].content_type, "correction");
+});
+
+test("a recording can point at a related entry — most useful for a correction or a contradiction", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "This contradicts what I said on the 5th.", contentType: "contradiction", relatedEntryId: "e1" });
+  assert.equal(tables.document_recordings[0].related_entry_id, "e1");
+});
+
+test("setRecordingAffectedDocuments links a recording to other documents, listed from either direction", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Response", storage_kind: "upload", storage_ref: "k2", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-3", case_id: "case-1", case_label: "X", title: "Notice", storage_kind: "upload", storage_ref: "k3", shared_at: null, created_at: "t" });
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "This update changes doc-2 and doc-3 too.", contentType: "update" });
+
+  await setRecordingAffectedDocuments(BENCH_NOTES, "r1", ["doc-2", "doc-3"]);
+
+  const affected = await listRecordingAffectedDocuments(BENCH_NOTES, "r1");
+  assert.deepEqual(affected.map((d) => d.id).sort(), ["doc-2", "doc-3"]);
+
+  const affecting = await listDocumentAffectingRecordings(BENCH_NOTES, "doc-2");
+  assert.equal(affecting.length, 1);
+  assert.equal(affecting[0].id, "r1");
+  // doc-1 is the recording's own primary document, not a cross-reference —
+  // it should never show up as one of the "also affecting" recordings.
+  const notAffecting = await listDocumentAffectingRecordings(BENCH_NOTES, "doc-1");
+  assert.equal(notAffecting.length, 0);
+});
+
+test("deleting a recording also removes its cross-document links", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Response", storage_kind: "upload", storage_ref: "k2", shared_at: null, created_at: "t" });
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "Affects doc-2." });
+  await setRecordingAffectedDocuments(BENCH_NOTES, "r1", ["doc-2"]);
+
+  await deleteDocumentRecording(BENCH_NOTES, "r1");
+  assert.equal(tables.recording_documents.length, 0);
+});
+
+test("deleting a document also removes cross-document links, in both directions", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Motion", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "X", title: "Response", storage_kind: "upload", storage_ref: "k2", shared_at: null, created_at: "t" });
+  await addDocumentRecording(BENCH_NOTES, { id: "r1", documentId: "doc-1", caseId: "case-1", notedAt: "t", body: "Affects doc-2." });
+  await setRecordingAffectedDocuments(BENCH_NOTES, "r1", ["doc-2"]);
+
+  await deleteDocument(BENCH_NOTES, "doc-1");
+  assert.equal(tables.recording_documents.length, 0);
+  assert.equal(tables.document_recordings.length, 0);
+});
+
+// --- Global search ---
+
+test("searchAll matches a query across cases, entries, documents, recordings, glossary, patterns, and notes, case-insensitively", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.cases.push({ id: "case-1", title: "Smith Family Matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "t", fact: "Filed the RESTRAINING order request.", entry_kind: "note", source: "manual", created_at: "t", updated_at: "t" });
+  tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "X", title: "Restraining order.pdf", storage_kind: "upload", storage_ref: "k", shared_at: null, created_at: "t" });
+  tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: "Talked to the restraining order clerk.", content_type: "note", created_at: "t" });
+  tables.glossary_terms.push({ id: "g1", case_id: "case-1", term: "TRO", definition: "Temporary restraining order.", created_at: "t", updated_at: "t" });
+  tables.patterns.push({ id: "p1", case_id: "case-1", subject_type: "judge", subject_name: "Judge X", description: "Mentions the restraining order rules often.", entries_json: "[]", created_at: "t", updated_at: "t" });
+  tables.entrusted_notes.push({ id: "n1", case_id: "case-1", case_label: "X", body: "Restraining order status update.", created_at: "t" });
+
+  const results = await searchAll(BENCH_NOTES, { query: "restraining" });
+  assert.equal(results.entries.length, 1);
+  assert.equal(results.documents.length, 1);
+  assert.equal(results.recordings.length, 1);
+  assert.equal(results.glossary.length, 1);
+  assert.equal(results.patterns.length, 1);
+  assert.equal(results.notes.length, 1);
+  assert.equal(results.documents[0].case_title, "Smith Family Matter");
+  assert.equal(results.recordings[0].document_title, "Restraining order.pdf");
+});
+
+test("searchAll with a contentType filter and no query browses every recording of that type, across every case", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.document_recordings.push({ id: "r1", document_id: "doc-1", case_id: "case-1", noted_at: "t", body: "A plain note.", content_type: "note", created_at: "t" });
+  tables.document_recordings.push({ id: "r2", document_id: "doc-2", case_id: "case-2", noted_at: "t", body: "Fixing an earlier mistake.", content_type: "correction", created_at: "t" });
+  const results = await searchAll(BENCH_NOTES, { contentType: "correction" });
+  assert.equal(results.recordings.length, 1);
+  assert.equal(results.recordings[0].id, "r2");
+});
+
+test("searchAll with an entryKind filter and no query browses every hearing/deadline across every case", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.docket_entries.push({ id: "e1", case_id: "case-1", case_label: "X", entry_date: "t", fact: "Just a note.", entry_kind: "note", source: "manual", created_at: "t", updated_at: "t" });
+  tables.docket_entries.push({ id: "e2", case_id: "case-1", case_label: "X", entry_date: "t", fact: "Hearing.", entry_kind: "hearing", source: "manual", created_at: "t", updated_at: "t" });
+  const results = await searchAll(BENCH_NOTES, { entryKind: "hearing" });
+  assert.equal(results.entries.length, 1);
+  assert.equal(results.entries[0].id, "e2");
+});
+
+test("searchAll returns nothing for a query that matches nothing, rather than everything", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  tables.cases.push({ id: "case-1", title: "Smith Family Matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  const results = await searchAll(BENCH_NOTES, { query: "nonexistent-term-xyz" });
+  assert.equal(results.cases.length, 0);
 });
 
 test("deleting a case removes every entry, document, recording, glossary term, pattern, and note under it", async () => {

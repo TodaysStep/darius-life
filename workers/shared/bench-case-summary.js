@@ -56,12 +56,19 @@ function serializeCase({ caseRow, entries, documents, notes, patterns, glossary,
   // Darius's own words, whether typed or spoken and transcribed (Whisper,
   // via bench-transcribe.js) — a voice note not yet transcribed, or one
   // with neither a typed body nor a transcript, has nothing to add here.
+  // content_type is explicit, same rule as entry_kind above: the founder's
+  // own tag, never inferred from the words themselves, and surfaced
+  // directly so a correction or a flagged contradiction is never silently
+  // folded into the narrative as if it were just another plain note.
   const recordingLines = recordings
-    .map((r) => ({ date: r.noted_at, content: r.body || r.transcript }))
+    .map((r) => ({ date: r.noted_at, kind: r.content_type, content: r.body || r.transcript }))
     .filter((r) => r.content);
   if (recordingLines.length) {
     lines.push("\nVoice notes and recordings about specific documents (the founder's own words, dated):");
-    for (const r of recordingLines) lines.push(`- ${r.date}: ${r.content}`);
+    for (const r of recordingLines) {
+      const kindTag = r.kind && r.kind !== "note" ? ` [${r.kind.toUpperCase()}]` : "";
+      lines.push(`- ${r.date}${kindTag}: ${r.content}`);
+    }
   }
 
   if (notes.length) {
@@ -87,7 +94,8 @@ Write the summary in this structure:
 1. Overview — case number, court, status, and what kind of matter this appears to be, based only on what's written.
 2. Chronological summary — what has happened, in order, based on the timeline entries.
 3. Documents on file — a short list, including each one's own filing/service status exactly as given (drafted, filed, or served). Never state or imply a document is filed or served unless its status says so.
-4. Upcoming — every entry explicitly tagged [HEARING] or [DEADLINE] below, with its date, in order. Never a date you calculated yourself, and never anything not tagged that way.
+4. Corrections and contradictions — list every voice note tagged [CORRECTION] or [CONTRADICTION] below, exactly as written, next to what it corrects or conflicts with if that's stated. Never silently resolve a contradiction or decide which version is right — only report that one exists. Never fold a correction into the chronological summary above as if it had always been the fact; note that the record was corrected instead.
+5. Upcoming — every entry explicitly tagged [HEARING] or [DEADLINE] below, with its date, in order. Never a date you calculated yourself, and never anything not tagged that way.
 
 If the record is too sparse to say much yet, say that plainly instead of padding it out. Do not add a disclaimer of your own — the person reading this already knows it's a generated summary, not legal advice.
 

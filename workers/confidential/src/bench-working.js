@@ -96,6 +96,10 @@ const addDocumentRecording = (env, fields) => data.addDocumentRecording(env.BENC
 const getDocumentRecording = (env, id) => data.getDocumentRecording(env.BENCH_NOTES, id);
 const deleteDocumentRecording = (env, id) => data.deleteDocumentRecording(env.BENCH_NOTES, id);
 const editRecordingTranscript = (env, id, transcript) => data.editRecordingTranscript(env.BENCH_NOTES, id, transcript);
+const setRecordingAffectedDocuments = (env, recordingId, documentIds) => data.setRecordingAffectedDocuments(env.BENCH_NOTES, recordingId, documentIds);
+const listRecordingAffectedDocuments = (env, recordingId) => data.listRecordingAffectedDocuments(env.BENCH_NOTES, recordingId);
+const listDocumentAffectingRecordings = (env, documentId) => data.listDocumentAffectingRecordings(env.BENCH_NOTES, documentId);
+const searchAll = (env, filters) => data.searchAll(env.BENCH_NOTES, filters);
 const deleteEntry = (env, id) => data.deleteEntry(env.BENCH_NOTES, id);
 
 // Every R2 delete below is best-effort: if a key is already gone (or the
@@ -239,7 +243,7 @@ function renderCaseList(cases, grants, grantSummaries, upcomingByCase) {
     "Bench Notes",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Working docket — private</span></h1></header>
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
-<p class="note"><a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a></p>
+<p class="note"><a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
 
 <h2>Upload a document</h2>
 <p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional. Large files upload directly with a progress bar, so a big scan won't hang or crash the page.</p>
@@ -434,14 +438,56 @@ function renderTranscript(base, r) {
   return `<p class="hint">Transcribing…</p>`;
 }
 
-function renderRecordingRow(base, r) {
+// note (default) | correction | contradiction | update — Darius's own
+// explicit choice for what kind of input this actually is, never inferred
+// from the note/transcript text. A different axis entirely from
+// docket_entries.entry_kind (that's about timing — hearing/deadline vs. a
+// plain fact — this is about the input's own nature).
+const RECORDING_CONTENT_TYPES = [
+  { value: "note", label: "Note" },
+  { value: "correction", label: "Correction" },
+  { value: "contradiction", label: "Contradiction" },
+  { value: "update", label: "Update" },
+];
+// Named noteContentType, not contentType — blobUploadFields() already
+// uses "contentType" for an uploaded file's MIME type (data-blob-content-
+// type), and this form can carry both at once.
+function contentTypeSelect(id, selected) {
+  const options = RECORDING_CONTENT_TYPES.map((k) => `<option value="${k.value}"${k.value === (selected || "note") ? " selected" : ""}>${k.label}</option>`).join("\n");
+  return `<label for="${id}">Kind of input</label>
+<select id="${id}" name="noteContentType">
+${options}
+</select>`;
+}
+
+// affectedDocuments/relatedEntry are precomputed by the caller
+// (handleBenchGet's docDetailMatch) — see listRecordingAffectedDocuments
+// and the entries already fetched for the page, rather than this
+// function querying anything itself.
+function renderRecordingRow(base, r, { affectedDocuments = [], relatedEntry = null } = {}) {
   const audio = r.audio_storage_ref
     ? `<audio controls src="${PREFIX}recordings/${escapeHtml(r.id)}/file" style="width:100%;margin-top:0.5em"></audio>${r.audio_duration_seconds ? `<span class="hint">${formatDuration(r.audio_duration_seconds)}</span>` : ""}`
     : "";
-  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}
+  const contentTag = r.content_type && r.content_type !== "note" ? `<span class="status">${escapeHtml(r.content_type)}</span>` : "";
+  const relatedLine = relatedEntry ? `<p class="hint">Relates to: ${escapeHtml(relatedEntry.entry_date)} — ${escapeHtml(truncate(relatedEntry.fact, 60))}</p>` : "";
+  const affectedLine = affectedDocuments.length
+    ? `<p class="hint">Also affects: ${affectedDocuments.map((d) => `<a href="${PREFIX}documents/${escapeHtml(d.id)}">${escapeHtml(d.title)}</a>`).join(", ")}</p>`
+    : "";
+  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${contentTag}${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}
 ${renderTranscript(base, r)}
+${relatedLine}${affectedLine}
 <form method="post" action="${base}/recordings/${escapeHtml(r.id)}/delete"><button type="submit">Delete</button></form>
 </div>`;
+}
+
+// The reverse view — recordings filed under some OTHER document in this
+// case that named this one as also affected (recording_documents), shown
+// on this document's own page so its full reach is visible from here too.
+function renderAffectingRecordings(affectingRecordings, documentTitleById) {
+  if (!affectingRecordings.length) return "";
+  return `<h3>Also mentioned in</h3>
+<p class="hint">Voice notes filed under another document in this case that named this one as also affected.</p>
+${affectingRecordings.map((r) => `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span><span class="status">${escapeHtml(r.content_type)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : r.transcript ? `<div class="entry-layer">${escapeHtml(r.transcript)}</div>` : ""}<p class="hint">From <a href="${PREFIX}documents/${escapeHtml(r.document_id)}">${escapeHtml(documentTitleById.get(r.document_id) || "another document")}</a></p></div>`).join("\n")}`;
 }
 
 // Filing/service is a record of what Darius has actually done, never a
@@ -496,20 +542,28 @@ ${doc.proof_of_service_ref ? `<p class="hint"><a href="${proofHref}">Open proof 
 // document, at different points in time" actually lives, rather than
 // crowding the already form-dense case page with it. Reachable from the
 // case page's "notes, recordings & service" link next to each document.
-function renderDocumentDetail(caseRow, doc, recordings) {
+function renderDocumentDetail(caseRow, doc, recordings, { entries = [], otherDocuments = [], affectedByRecording = new Map(), affectingRecordings = [], documentTitleById = new Map() } = {}) {
   const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
   const today = todayStr();
+  const entryById = new Map(entries.map((e) => [e.id, e]));
+  const recordingRows = recordings.length
+    ? recordings.map((r) => renderRecordingRow(`${base}/documents/${escapeHtml(doc.id)}`, r, {
+        affectedDocuments: affectedByRecording.get(r.id) || [],
+        relatedEntry: r.related_entry_id ? entryById.get(r.related_entry_id) : null,
+      })).join("\n")
+    : `<p class="hint">Nothing recorded yet.</p>`;
   return benchPage(
     doc.title,
     `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(doc.title)}<span class="tag">${escapeHtml(caseRow.title)}</span></h1></header>
-<p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a></p>
+<p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
 <p class="hint"><a href="${escapeHtml(documentOwnerHref(doc))}">Open the document itself</a></p>
 
 ${renderFilingSection(base, doc)}
 
 <h2>Notes &amp; recordings</h2>
 <p class="hint">Your own thinking about this document, dated, as many as you like, added whenever something changes — never shared, never entrusted-visible.</p>
-${recordings.length ? recordings.map((r) => renderRecordingRow(`${base}/documents/${escapeHtml(doc.id)}`, r)).join("\n") : `<p class="hint">Nothing recorded yet.</p>`}
+${recordingRows}
+${renderAffectingRecordings(affectingRecordings, documentTitleById)}
 
 <h3>Add one</h3>
 <form method="post" action="${base}/documents/${escapeHtml(doc.id)}/recordings" id="recordingForm" data-blob-upload>
@@ -517,6 +571,16 @@ ${recordings.length ? recordings.map((r) => renderRecordingRow(`${base}/document
 <input type="date" id="recordingDate" name="notedAt" value="${today}" required>
 <label for="recordingBody">Note (optional — type one, or just record and leave this blank)</label>
 <textarea id="recordingBody" name="body"></textarea>
+${contentTypeSelect("recordingContentType", "note")}
+<label for="recordingRelatedEntry">Relates to / corrects (optional)</label>
+<select id="recordingRelatedEntry" name="relatedEntryId">
+<option value="">None</option>
+${entryOptionsList(entries)}
+</select>
+${otherDocuments.length ? `<label for="recordingAffectedDocs">Also affects (optional — an update or correction that touches more than just this document; hold Ctrl/Cmd to pick more than one)</label>
+<select id="recordingAffectedDocs" name="affectedDocumentIds" multiple>
+${documentOptionsList(otherDocuments)}
+</select>` : ""}
 <label for="recordingFile">Audio (optional — upload a file, or use Record below)</label>
 <input type="file" id="recordingFile" data-blob-file accept="audio/*">
 ${blobUploadFields()}
@@ -530,6 +594,21 @@ ${blobUploadFields()}
 
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
+// Shared by both the "attach to a timeline entry" select (documents) and
+// the "relates to / corrects" select (recordings) — one place that
+// decides how an entry is labeled in a dropdown.
+function entryOptionsList(entries) {
+  return entries
+    .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.entry_date)} — ${escapeHtml(truncate(e.fact, 40))}</option>`)
+    .join("\n");
+}
+
+function documentOptionsList(documents, selectedIds = []) {
+  return documents
+    .map((d) => `<option value="${escapeHtml(d.id)}"${selectedIds.includes(d.id) ? " selected" : ""}>${escapeHtml(d.title)}</option>`)
+    .join("\n");
+}
+
 function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes) {
   const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
   const docsByEntry = new Map();
@@ -540,9 +619,7 @@ function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes
       docsByEntry.get(d.entry_id).push(d);
     } else generalDocs.push(d);
   }
-  const entryOptions = entries
-    .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.entry_date)} — ${escapeHtml(truncate(e.fact, 40))}</option>`)
-    .join("\n");
+  const entryOptions = entryOptionsList(entries);
 
   return benchPage(
     caseRow.title,
@@ -691,6 +768,54 @@ ${rows}
   );
 }
 
+// One search box across every case at once — cases, timeline entries,
+// documents, voice notes/recordings, glossary, patterns, and notes to the
+// entrusted side. contentType/entryKind let Darius browse by category
+// alone, with no text at all ("every correction", "every hearing"),
+// satisfying "searchable by the type of input" directly rather than only
+// through free text. See bench-data.js's searchAll for how matching
+// actually works (whole-table fetch, filtered in JS).
+function renderSearchResults(query, { contentType, entryKind }, results) {
+  const section = (heading, rows, renderRow) => (rows.length ? `<h2>${escapeHtml(heading)} (${rows.length})</h2>${rows.map(renderRow).join("\n")}` : "");
+  const filterLinks = `<p class="hint">Browse by type, with or without a search term:
+<a href="${PREFIX}search?contentType=correction">Corrections</a> ·
+<a href="${PREFIX}search?contentType=contradiction">Contradictions</a> ·
+<a href="${PREFIX}search?contentType=update">Updates</a> ·
+<a href="${PREFIX}search?entryKind=hearing">Hearings</a> ·
+<a href="${PREFIX}search?entryKind=deadline">Deadlines</a> ·
+<a href="${PREFIX}search">Clear</a></p>`;
+  const form = `<form method="get" action="${PREFIX}search">
+<label for="q">Search cases, entries, documents, voice notes, glossary, patterns, notes</label>
+<input type="text" id="q" name="q" value="${escapeHtml(query || "")}" placeholder="Search everything...">
+${contentType ? `<input type="hidden" name="contentType" value="${escapeHtml(contentType)}">` : ""}
+${entryKind ? `<input type="hidden" name="entryKind" value="${escapeHtml(entryKind)}">` : ""}
+<button type="submit">Search</button>
+</form>
+${filterLinks}`;
+
+  if (!results) {
+    return benchPage("Search", `<header class="bench-header">${STENOTYPE_ICON()}<h1>Search<span class="tag">Everything, at once</span></h1></header>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+${form}`);
+  }
+
+  const body = [
+    section("Cases", results.cases, (c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`),
+    section("Timeline entries", results.entries, (e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span>${e.entry_kind && e.entry_kind !== "note" ? `<span class="status">${escapeHtml(e.entry_kind)}</span>` : ""}<div class="entry-layer">${escapeHtml(e.fact)}</div><p class="hint">${escapeHtml(e.case_title || "")} · <a href="${PREFIX}case/${escapeHtml(e.case_id)}">Open case</a></p></div>`),
+    section("Documents", results.documents, (d) => `<div class="case-row"><a href="${PREFIX}documents/${escapeHtml(d.id)}">${escapeHtml(d.title)}</a><span class="status">${escapeHtml(d.case_title || "")}</span></div>`),
+    section("Voice notes &amp; recordings", results.recordings, (r) => `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.content_type && r.content_type !== "note" ? `<span class="status">${escapeHtml(r.content_type)}</span>` : ""}${r.body ? `<div class="entry-layer">${escapeHtml(truncate(r.body, 200))}</div>` : ""}${r.transcript ? `<div class="entry-layer">${escapeHtml(truncate(r.transcript, 200))}</div>` : ""}<p class="hint"><a href="${PREFIX}documents/${escapeHtml(r.document_id)}">${escapeHtml(r.document_title || "document")}</a> · ${escapeHtml(r.case_title || "")}</p></div>`),
+    section("Glossary", results.glossary, (g) => `<div class="card"><strong>${escapeHtml(g.term)}</strong><div>${escapeHtml(g.definition)}</div></div>`),
+    section("Patterns", results.patterns, (p) => `<div class="card"><strong>${escapeHtml(p.subject_name)}</strong> <span class="hint">(${escapeHtml(p.subject_type)})</span><div>${escapeHtml(p.description)}</div><p class="hint">${escapeHtml(p.case_title || "")}</p></div>`),
+    section("Notes to the entrusted side", results.notes, (n) => `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div><p class="hint">${escapeHtml(n.case_title || "")}</p></div>`),
+  ].join("\n");
+  const hasAny = Object.values(results).some((rows) => rows.length);
+
+  return benchPage("Search", `<header class="bench-header">${STENOTYPE_ICON()}<h1>Search<span class="tag">Everything, at once</span></h1></header>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+${form}
+${hasAny ? body : `<p class="hint">Nothing matched.</p>`}`);
+}
+
 // --- Routing ---
 
 export async function handleBenchGet(request, env, url) {
@@ -732,6 +857,14 @@ export async function handleBenchGet(request, env, url) {
 
     if (path === "resources") {
       return html(renderResources(await listResources(env)));
+    }
+
+    if (path === "search") {
+      const query = url.searchParams.get("q") || "";
+      const contentType = url.searchParams.get("contentType") || "";
+      const entryKind = url.searchParams.get("entryKind") || "";
+      const results = query || contentType || entryKind ? await searchAll(env, { query, contentType, entryKind }) : null;
+      return html(renderSearchResults(query, { contentType, entryKind }, results));
     }
 
     const previewMatch = path.match(/^preview\/([^/]+)$/);
@@ -810,8 +943,22 @@ export async function handleBenchGet(request, env, url) {
       if (!doc) return notFound();
       const caseRow = await getCase(env, doc.case_id);
       if (!caseRow) return notFound();
-      const recordings = await listDocumentRecordings(env, doc.id);
-      return html(renderDocumentDetail(caseRow, doc, recordings));
+      const [recordings, entries, allDocuments, affectingRecordings] = await Promise.all([
+        listDocumentRecordings(env, doc.id),
+        listEntries(env, caseRow.id),
+        listDocuments(env, caseRow.id),
+        listDocumentAffectingRecordings(env, doc.id),
+      ]);
+      const affectedByRecording = new Map(
+        await Promise.all(recordings.map(async (r) => [r.id, await listRecordingAffectedDocuments(env, r.id)])),
+      );
+      return html(renderDocumentDetail(caseRow, doc, recordings, {
+        entries,
+        otherDocuments: allDocuments.filter((d) => d.id !== doc.id),
+        affectedByRecording,
+        affectingRecordings,
+        documentTitleById: new Map(allDocuments.map((d) => [d.id, d.title])),
+      }));
     }
 
     const recordingFileMatch = path.match(/^recordings\/([^/]+)\/file$/);
@@ -1184,7 +1331,13 @@ export async function handleBenchPost(request, env, url, ctx) {
         body,
         audioStorageRef,
         audioMimeType,
+        contentType: form.get("noteContentType"),
+        relatedEntryId: form.get("relatedEntryId"),
       });
+      // Cross-document links are a separate write, after the recording
+      // itself exists — see setRecordingAffectedDocuments's own header.
+      const affectedDocumentIds = form.getAll("affectedDocumentIds").filter(Boolean);
+      if (affectedDocumentIds.length) await setRecordingAffectedDocuments(env, recordingId, affectedDocumentIds);
       // Audio gets transcribed first, then the case summary regenerates
       // once the transcript is there to inform it — a typed-only note has
       // nothing to transcribe, so it just regenerates directly.

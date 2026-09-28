@@ -276,6 +276,40 @@ Darius's own docket:
   thehotline.org), verified directly via a web search before being added
   rather than assumed, since a wrong number in a safety context is a real
   harm. Everything else on the page is his to add and delete.
+- **Voice notes carry their own kind of input, explicitly.** Every
+  recording (`document_recordings.content_type`) is tagged Note (the
+  default), Correction, Contradiction, or Update — Darius's own choice
+  from a select field right on the recording form, never inferred from
+  the words themselves. A recording can also point at one existing
+  docket entry it relates to or corrects
+  (`related_entry_id`), and — since "an update that affects multiple
+  documents differently" doesn't fit a single foreign key — name any
+  number of *other* documents in the case it also affects
+  (`recording_documents`, a plain many-to-many join table). Each
+  affected document then shows that recording cross-referenced under an
+  "Also mentioned in" section on its own page, so its full reach is
+  visible from wherever you're looking, not just from where it was
+  added. The case summary's own prompt tags `[CORRECTION]` and
+  `[CONTRADICTION]` recordings the same explicit way it already tags
+  `[HEARING]`/`[DEADLINE]` entries, and is told directly never to
+  silently resolve a contradiction or fold a correction into the
+  narrative as if it had always been the fact — only to report that one
+  exists, the same never-guess boundary as everywhere else in this
+  prompt.
+- **One search box across everything** (`/bench/search`, linked from the
+  case list and every document page) — cases, timeline entries,
+  documents, voice notes/recordings, glossary terms, patterns, and notes
+  to the entrusted side, all at once, each result linking back to where
+  it actually lives. `contentType=`/`entryKind=` query params (with
+  quick links on the search page itself) let you browse a whole category
+  with no text at all — every correction, every contradiction, every
+  hearing, across every case — answering "searchable by the type of
+  input" directly. Implemented as a whole-table fetch filtered in JS
+  (`bench-data.js`'s `searchAll`), not a `LIKE`/FTS5 query: a personal
+  caseload is small enough (dozens to low hundreds of rows per table, not
+  millions) that this costs nothing real, and it needed no new SQL
+  capability from D1 or from the test suite's own deliberately minimal
+  fake-D1 harness.
 - **Runs entirely on the Workers Free plan — no Workers Paid plan
   required, anywhere in Bench Notes.** Checked directly against
   Cloudflare's own current published limits, not assumed: neither Worker's
