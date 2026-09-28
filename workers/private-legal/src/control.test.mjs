@@ -11,7 +11,7 @@ beforeEach(() => resetCertsCacheForTests());
 const TEAM_DOMAIN = "test-team.cloudflareaccess.com";
 const AUD = "test-aud-tag";
 const KID = "test-key-1";
-const ENV = { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, GITHUB_REPO: "TodaysStep/darius-life", GITHUB_BRANCH: "main", GITHUB_COMMIT_TOKEN: "test-token" };
+const ENV = { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, GITHUB_REPO: "TodaysStep/darius-life", GITHUB_BRANCH: "main", GH_COMMIT_TOKEN: "test-token" };
 
 const b64url = (bytes) => Buffer.from(bytes).toString("base64url");
 const jsonB64url = (obj) => b64url(new TextEncoder().encode(JSON.stringify(obj)));

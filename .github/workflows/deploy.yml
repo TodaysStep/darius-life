@@ -58,9 +58,9 @@ jobs:
           # GitHub API. A fine-grained PAT scoped to only this repo, Contents:
           # Read and write.
           secrets: |
-            GITHUB_COMMIT_TOKEN
+            GH_COMMIT_TOKEN
         env:
-          GITHUB_COMMIT_TOKEN: ${{ secrets.GITHUB_COMMIT_TOKEN }}
+          GH_COMMIT_TOKEN: ${{ secrets.GH_COMMIT_TOKEN }}
 
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live

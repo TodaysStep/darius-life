@@ -31,7 +31,7 @@ ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
 ACCESS_AUD = "REPLACE-ME"
 GITHUB_REPO = "TodaysStep/darius-life"
 GITHUB_BRANCH = "main"
-# GITHUB_COMMIT_TOKEN is a secret, not a var — set with
-# `wrangler secret put GITHUB_COMMIT_TOKEN` or via deploy.yml's wrangler-action
+# GH_COMMIT_TOKEN is a secret, not a var — set with
+# `wrangler secret put GH_COMMIT_TOKEN` or via deploy.yml's wrangler-action
 # `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).
 # A fine-grained GitHub PAT scoped to only this repo, Contents: Read and write.

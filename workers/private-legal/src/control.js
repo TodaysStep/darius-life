@@ -47,7 +47,7 @@ function encodeBase64Utf8(str) {
 }
 
 const GITHUB_HEADERS = (env) => ({
-  authorization: `Bearer ${env.GITHUB_COMMIT_TOKEN}`,
+  authorization: `Bearer ${env.GH_COMMIT_TOKEN}`,
   accept: "application/vnd.github+json",
   "user-agent": "darius-life-control-panel",
 });

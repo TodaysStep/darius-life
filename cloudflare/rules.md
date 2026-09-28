@@ -98,7 +98,7 @@ a secret the Worker needs at runtime:
   settings → Personal access tokens → Fine-grained tokens → repository access
   limited to **only** `TodaysStep/darius-life`, permission **Contents: Read
   and write**, nothing else.
-- Add it as a repository secret named `GITHUB_COMMIT_TOKEN` (same place as
+- Add it as a repository secret named `GH_COMMIT_TOKEN` (same place as
   `CLOUDFLARE_API_TOKEN` etc.) — `.github/workflows/deploy.yml`'s
   `deploy-worker` job uploads it to the Worker as an encrypted secret
   (`wrangler secret put`, via `wrangler-action`'s `secrets` input) on every

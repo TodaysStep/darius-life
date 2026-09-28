@@ -76,11 +76,11 @@ No separate hostname. `workers/private-legal` serves two paths on
    (403, never 200), so get them right before the first deploy.
 4. Repo → Settings → Secrets and variables → Actions → add
    `CLOUDFLARE_API_TOKEN` (a token scoped to Workers/R2 edit on this account),
-   `CLOUDFLARE_ACCOUNT_ID`, and `GITHUB_COMMIT_TOKEN` (a fine-grained GitHub
+   `CLOUDFLARE_ACCOUNT_ID`, and `GH_COMMIT_TOKEN` (a fine-grained GitHub
    PAT scoped to only this repo, Contents: Read and write — the control panel
    uses it to commit `data/status.json`/`data/projects.json` on Darius's
    behalf). These drive `deploy-worker` (`.github/workflows/deploy.yml`,
-   `cloudflare/wrangler-action@v4`) — `GITHUB_COMMIT_TOKEN` specifically is
+   `cloudflare/wrangler-action@v4`) — `GH_COMMIT_TOKEN` specifically is
    uploaded to the Worker as an encrypted secret on every deploy, never baked
    into the bundle.
 5. Push to `main`. The `deploy-worker` job runs `wrangler deploy` from
