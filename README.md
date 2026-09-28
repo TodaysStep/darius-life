@@ -59,54 +59,92 @@ file — both the control panel and a manual edit write only to them.
 ## Bench Notes — private case management
 
 Split across two Workers on two hostnames, on purpose, because the two sides
-have genuinely different trust requirements:
+have genuinely different trust requirements. Both bind the same D1 database
+(`darius-life-bench-notes`); the split is enforced by which query functions
+each Worker's own source tree contains, not by a shared permission check.
 
-`https://confidential.darius.life/bench/` (`workers/confidential/`) is
-Darius's own docket: cases, dated timeline entries carrying four layers at
-once (fact, recommended direction, his commentary, court takeaways), a
-living glossary, and pattern-spotting on judge/opposing-counsel behavior.
-Data lives in Cloudflare D1 (`darius-life-bench-notes`), never this repo.
-Gated by a pre-existing Cloudflare Access application ("confidential legal
-area," policy "Allowed readers") that already protected this hostname before
-Bench Notes existed — reused exactly as-is, no changes made to it. That
-application protects the Worker's entire production/preview URL at the edge
-(not a specific path), so `bench-working.js` still independently re-verifies
-the Access JWT itself (`workers/shared/access.js`) as defense in depth, same
-as every other gated route in this repo, even though Access has already
-checked once.
+**`https://confidential.darius.life/bench/`** (`workers/confidential/`) is
+Darius's own docket:
 
-`https://darius.life/bench-entrusted/` (`workers/private-legal/`) is a
-**structurally separate** documents-only area for guests Darius manually
-shares with — a single universal passphrase per grant
-(`workers/shared/bench-crypto.js` hashes it; the plaintext is never stored),
-revocable at any time from the working side, scoped to specific cases. It
-has no Cloudflare Access gate — guests have no Access identity, and it
-*can't* live behind confidential.darius.life's Access application even if it
-wanted to, since that application gates the whole Worker regardless of path.
-Its code (`src/bench-entrusted.js`) has no import of and no query against
-`cases`, `docket_entries`, `patterns`, or `glossary_terms`; it can only ever
-reach `access_grants`, `documents`, and `entrusted_notes` — both sides bind
-the same D1 database, but each Worker's source tree only contains the query
-functions for its own tables. That is what makes it structurally separate
-rather than a filtered view. See `workers/shared/schema/bench-notes.sql`
-for the full data model and its own confidentiality notes.
+- Cases, each with a chronological **timeline** — dated entries along a
+  visible spine, every entry carrying four layers at once (fact, recommended
+  direction, his commentary, court takeaways) and any documents attached to
+  it specifically.
+- A **glossary** and **pattern-spotting** on judge/opposing-counsel behavior.
+- **Documents**, either attached to one timeline entry or general to the
+  case. `storage_ref` just points at wherever the file actually lives (the
+  Lovable document viewer, R2, a link) — this table never stores the file.
+- An **entrusted-access management area** on the case list page: every
+  guest's passphrase grant, which cases they're scoped to, how many
+  documents and timeline entries are actually shared with them (computed
+  live, not just the case count), one-click revoke, and a passphrase-change
+  form per grant.
+- A **preview** (`/bench/preview/:grantId`) that renders the exact same
+  `renderEntrustedView` function the real entrusted login calls — not a
+  reimplementation that could drift — with a red banner, no session cookie,
+  no passphrase, read-only.
 
-**How this Access application was found, for the record (2026-09-28):** an
-earlier pass concluded no Cloudflare Access application existed at all,
-because `/accounts/{id}/access/apps` returns zero results with the API token
-available here — that token genuinely cannot list or manage Access
-applications. That conclusion was wrong: the application already existed,
-created via the dashboard, protecting a Worker-scoped destination rather
-than a path on `darius.life` itself. It surfaced by requesting the Worker's
-custom domain directly and reading the real team domain and AUD tag straight
-out of the resulting Access login redirect's own JWT — `dreamstep.
-cloudflareaccess.com` and the AUD tag now hardcoded in
+Data lives in Cloudflare D1, never this repo. Gated by a pre-existing
+Cloudflare Access application ("confidential legal area," policy "Allowed
+readers") that already protected this hostname before Bench Notes existed —
+reused exactly as-is, no changes made to it. That application protects the
+Worker's entire production/preview URL at the edge (not a specific path), so
+`bench-working.js` still independently re-verifies the Access JWT itself
+(`workers/shared/access.js`) as defense in depth, same as every other gated
+route in this repo, even though Access has already checked once.
+
+**`https://darius.life/bench-entrusted/`** (`workers/private-legal/`) is a
+**structurally separate** area for guests Darius manually shares with — a
+single universal passphrase per grant (`workers/shared/bench-crypto.js`
+hashes it; the plaintext is never stored), revocable at any time from the
+working side, scoped to specific cases. No Cloudflare Access gate — guests
+have no Access identity, and it *can't* live behind confidential.darius.life's
+Access application even if it wanted to, since that application gates the
+whole Worker regardless of path. It shows the same timeline-and-documents
+structure as the working side, limited to whatever's been explicitly shared:
+
+- `workers/shared/bench-entrusted-view.js` is the entire confidentiality
+  boundary for `docket_entries`. Its one query into that table selects
+  exactly `id, case_id, case_label, entry_date, fact` — never
+  `recommended_direction`, `commentary`, or `court_takeaways` — filtered to
+  `shared_at IS NOT NULL AND case_id IN (the grant's own scope)`. Both
+  `bench-entrusted.js` (a real guest) and `bench-working.js`'s preview
+  (Darius, previewing) call this same module, so there is exactly one
+  rendering of "what a guest sees," never two that could disagree.
+- `patterns` and `glossary_terms` are never reachable from here at all, not
+  even a shared/unshared toggle exists for them.
+
+See `workers/shared/schema/bench-notes.sql` for the full data model and its
+confidentiality notes, and `workers/shared/bench-entrusted-view.js`'s own
+header for exactly how the boundary is enforced.
+
+**How the working side's Access application was found, for the record
+(2026-09-28):** an earlier pass concluded no Cloudflare Access application
+existed at all, because `/accounts/{id}/access/apps` returns zero results
+with the API token available here — that token genuinely cannot list or
+manage Access applications. That conclusion was wrong: the application
+already existed, created via the dashboard, protecting a Worker-scoped
+destination rather than a path on `darius.life` itself. It surfaced by
+requesting the Worker's custom domain directly and reading the real team
+domain and AUD tag straight out of the resulting Access login redirect's own
+JWT — `dreamstep.cloudflareaccess.com` and the AUD tag hardcoded in
 `workers/confidential/wrangler.toml`, not placeholders. The domain itself
 had a typo (`condifential.darius.life`) that was corrected to
-`confidential.darius.life` via the Workers Custom Domains API the same day.
+`confidential.darius.life` via the Workers Custom Domains API the same day;
+the old Custom Domain binding is deleted, though a DNS A record under the
+typo may still exist — the token here can't reach `/dns_records` to check
+or remove it (needs the zone-level **DNS → Edit** permission added).
 `/legal/private/*` and `/control/*` on `darius.life` still use a genuinely
 different Access application, whose real values are still unconfirmed — see
 `workers/private-legal/wrangler.toml`.
+
+**Publishing from ChatGPT — investigated, not built.** The idea was to wire
+Bench Notes into an existing ChatGPT-reachable "publishing desk," reusing its
+auth and source of truth. No such thing exists: the one real ChatGPT-facing
+system found (an MCP server inside the separate Posterity Cloud platform) is
+read-only, PAT-authenticated, unsubmitted to OpenAI, and that platform's own
+governing rule is that AI is never the publisher. Bench Notes' own case/
+timeline/document forms above are, for now, the only way content gets in.
 
 ## Status and project lights
 

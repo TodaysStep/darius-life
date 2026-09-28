@@ -162,3 +162,95 @@ test("GET /bench/case/:id for a nonexistent case is 404", async () => {
   const res = await handleBenchGet(authedRequest("https://darius.life/bench/case/nope", token), env, new URL("https://darius.life/bench/case/nope"));
   assert.equal(res.status, 404);
 });
+
+const postForm = (url, token, fields) =>
+  authedRequest(url, token, { method: "POST", body: new URLSearchParams(fields).toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+
+test("sharing a docket entry exposes only the date and fact — never the other three layers", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", status: "open" });
+  fakeD1.tables.docket_entries.push({
+    id: "entry-1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28",
+    fact: "Hearing held.", recommended_direction: "SECRET-DIRECTION", commentary: "SECRET-COMMENTARY",
+    court_takeaways: "SECRET-TAKEAWAYS", shared_at: null, source: "manual", created_at: "t", updated_at: "t",
+  });
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "x", case_ids_json: JSON.stringify(["case-1"]), label: "Attorney", created_at: "t", revoked_at: null });
+
+  const shareRes = await handleBenchPost(
+    postForm("https://darius.life/bench/case/case-1/entries/entry-1/share", token, {}),
+    env, new URL("https://darius.life/bench/case/case-1/entries/entry-1/share"),
+  );
+  assert.equal(shareRes.status, 303);
+  assert.ok(fakeD1.tables.docket_entries[0].shared_at);
+
+  const previewRes = await handleBenchGet(authedRequest("https://darius.life/bench/preview/grant-1", token), env, new URL("https://darius.life/bench/preview/grant-1"));
+  const html = await previewRes.text();
+  assert.match(html, /Hearing held\./);
+  assert.doesNotMatch(html, /SECRET-DIRECTION/);
+  assert.doesNotMatch(html, /SECRET-COMMENTARY/);
+  assert.doesNotMatch(html, /SECRET-TAKEAWAYS/);
+});
+
+test("an unshared entry, and an entry outside the grant's case scope, never appear in the preview", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "In scope", status: "open" });
+  fakeD1.tables.cases.push({ id: "case-2", title: "Out of scope", status: "open" });
+  fakeD1.tables.docket_entries.push({ id: "e-unshared", case_id: "case-1", case_label: "In scope", entry_date: "2026-09-01", fact: "UNSHARED-FACT", shared_at: null, source: "manual" });
+  fakeD1.tables.docket_entries.push({ id: "e-out-of-scope", case_id: "case-2", case_label: "Out of scope", entry_date: "2026-09-02", fact: "OUT-OF-SCOPE-FACT", shared_at: "t", source: "manual" });
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "x", case_ids_json: JSON.stringify(["case-1"]), label: "Attorney", created_at: "t", revoked_at: null });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/preview/grant-1", token), env, new URL("https://darius.life/bench/preview/grant-1"));
+  const html = await res.text();
+  assert.doesNotMatch(html, /UNSHARED-FACT/);
+  assert.doesNotMatch(html, /OUT-OF-SCOPE-FACT/);
+});
+
+test("a document attached to an entry appears nested under that entry in the preview", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", status: "open" });
+  fakeD1.tables.docket_entries.push({ id: "entry-1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28", fact: "Hearing held.", shared_at: "t", source: "manual" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", entry_id: "entry-1", title: "Motion PDF", storage_ref: "https://example.com/motion", shared_at: "t", created_at: "t" });
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "x", case_ids_json: JSON.stringify(["case-1"]), label: "Attorney", created_at: "t", revoked_at: null });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/preview/grant-1", token), env, new URL("https://darius.life/bench/preview/grant-1"));
+  const html = await res.text();
+  assert.match(html, /Motion PDF/);
+});
+
+test("preview creates no cookie and requires the working side's own Access token, not the guest's passphrase", async () => {
+  const { env, fakeD1 } = setup(null);
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "x", case_ids_json: "[]", label: "Attorney", created_at: "t", revoked_at: null });
+  const res = await handleBenchGet(new Request("https://darius.life/bench/preview/grant-1"), env, new URL("https://darius.life/bench/preview/grant-1"));
+  assert.equal(res.status, 403);
+});
+
+test("changing a grant's passphrase updates its hash and rejects the old one downstream", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  const oldHash = "old-hash-value";
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: oldHash, case_ids_json: "[]", label: "Attorney", created_at: "t", revoked_at: null });
+
+  const res = await handleBenchPost(
+    postForm("https://darius.life/bench/grants/grant-1/passphrase", token, { newPassphrase: "brand-new-passphrase" }),
+    env, new URL("https://darius.life/bench/grants/grant-1/passphrase"),
+  );
+  assert.equal(res.status, 303);
+  assert.notEqual(fakeD1.tables.access_grants[0].code_hash, oldHash);
+});
+
+test("the management page reports accurate shared document and entry counts per grant", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", status: "open" });
+  fakeD1.tables.documents.push({ id: "doc-1", case_id: "case-1", case_label: "Family matter", title: "Doc", storage_ref: "x", shared_at: "t", created_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "entry-1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-01", fact: "F", shared_at: "t", source: "manual" });
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "x", case_ids_json: JSON.stringify(["case-1"]), label: "Attorney", created_at: "t", revoked_at: null });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  const html = await res.text();
+  assert.match(html, /Family matter/);
+  assert.match(html, /1 document, 1 timeline entry shared/);
+});

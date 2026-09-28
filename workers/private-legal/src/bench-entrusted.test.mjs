@@ -113,3 +113,26 @@ test("logout clears the cookie", async () => {
   assert.equal(res.status, 303);
   assert.match(res.headers.get("set-cookie"), /Max-Age=0/);
 });
+
+test("a real guest session shows a shared entry's fact but never its private layers", async () => {
+  const { env, fakeD1 } = setup();
+  fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: await sha256Hex("right-code"), case_ids_json: JSON.stringify(["case-1"]), label: null, created_at: "t", revoked_at: null });
+  fakeD1.tables.docket_entries.push({
+    id: "entry-1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28",
+    fact: "Hearing held.", recommended_direction: "SECRET-DIRECTION", commentary: "SECRET-COMMENTARY",
+    court_takeaways: "SECRET-TAKEAWAYS", shared_at: "t", source: "manual",
+  });
+
+  const form = new URLSearchParams({ passphrase: "right-code" });
+  const loginRes = await handleBenchEntrustedPost(
+    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench-entrusted/login"),
+  );
+  const cookie = extractSetCookie(loginRes);
+  const portalRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", cookie), env, new URL("https://darius.life/bench-entrusted/"));
+  const html = await portalRes.text();
+  assert.match(html, /Hearing held\./);
+  assert.doesNotMatch(html, /SECRET-DIRECTION/);
+  assert.doesNotMatch(html, /SECRET-COMMENTARY/);
+  assert.doesNotMatch(html, /SECRET-TAKEAWAYS/);
+});

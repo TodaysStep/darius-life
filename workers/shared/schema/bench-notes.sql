@@ -1,11 +1,17 @@
--- Bench Notes data model — darius.life/bench/*
+-- Bench Notes data model — confidential.darius.life/bench/* (working side)
+-- and darius.life/bench-entrusted/* (entrusted side).
 --
 -- Confidentiality is enforced structurally, not by a visibility flag: the
--- entrusted side's code (src/bench-entrusted.js) is only ever given a query
--- helper that can touch documents / entrusted_notes / access_grants. It has
--- no function capable of reading cases, docket_entries, patterns, or
--- glossary_terms — those tables simply never appear in its module. This is
--- what "structurally separate, not a filtered view" means at the data layer.
+-- entrusted side's code (bench-entrusted.js, and the shared render function
+-- it and the working side's preview both call — workers/shared/
+-- bench-entrusted-view.js) can only ever reach cases/docket_entries through
+-- one narrow, hardcoded query (docket_entries columns id/case_label/
+-- entry_date/fact/shared_at only, WHERE shared_at IS NOT NULL AND case_id IN
+-- the grant's own scope) — never recommended_direction, commentary, or
+-- court_takeaways, never an unshared entry, never a case outside the
+-- grant's scope, and never patterns or glossary_terms at all. That query
+-- shape is the entire confidentiality boundary; nothing else reaches these
+-- tables from that side.
 
 CREATE TABLE IF NOT EXISTS cases (
   id            TEXT PRIMARY KEY,           -- e.g. "family-2026"
@@ -25,17 +31,23 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE TABLE IF NOT EXISTS docket_entries (
   id                    TEXT PRIMARY KEY,
   case_id               TEXT NOT NULL REFERENCES cases(id),
+  case_label            TEXT NOT NULL DEFAULT '',  -- denormalized, same reason as documents.case_label
   entry_date            TEXT NOT NULL,       -- the date the docket event itself happened
-  fact                  TEXT NOT NULL,       -- what happened — never inferred, never fabricated
-  recommended_direction TEXT,                -- what to consider doing about it
-  commentary            TEXT,                -- Darius's own read on it
-  court_takeaways       TEXT,                -- what the court/filing actually said or meant
+  fact                  TEXT NOT NULL,       -- what happened — never inferred, never fabricated;
+                                              -- the ONLY column of this table the entrusted side
+                                              -- may ever select, and only when shared_at is set
+  recommended_direction TEXT,                -- what to consider doing about it — working-side only
+  commentary            TEXT,                -- Darius's own read on it — working-side only
+  court_takeaways       TEXT,                -- what the court/filing actually said — working-side only
+  shared_at             TEXT,                -- null until Darius manually shares this entry —
+                                              -- never automatic, same pattern as documents.shared_at
   source                TEXT NOT NULL DEFAULT 'manual',  -- manual | green-filing-ingest
   ingest_item_id        TEXT REFERENCES ingest_items(id),
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_docket_entries_case ON docket_entries(case_id, entry_date);
+CREATE INDEX IF NOT EXISTS idx_docket_entries_shared ON docket_entries(shared_at);
 
 -- Pattern-spotting on judge/opposing-counsel behavior. subject_type/subject_name
 -- identify who the pattern is about; entries_json is a JSON array of
@@ -73,6 +85,10 @@ CREATE TABLE IF NOT EXISTS documents (
   case_label    TEXT NOT NULL DEFAULT '',  -- case title, denormalized at insert time so
                                             -- bench-entrusted.js can label a document group
                                             -- without ever querying the cases table itself
+  entry_id      TEXT REFERENCES docket_entries(id),  -- optional: attaches this document to one
+                                                      -- timeline entry instead of just the case
+                                                      -- generally. Null is a normal, general case
+                                                      -- document, not an error.
   title         TEXT NOT NULL,
   storage_ref   TEXT NOT NULL,
   filed_date    TEXT,
@@ -80,6 +96,7 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_documents_case ON documents(case_id);
+CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 
 -- Occasional notes Darius writes directly to the entrusted side — distinct
 -- from commentary (working-side, never shared). Also manual, also never

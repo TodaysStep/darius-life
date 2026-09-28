@@ -14,8 +14,17 @@ export const headers = (contentType) => ({
 // The stenotype image is supplied on a plain white background and is shown
 // that way deliberately — no transparent cutout — inside a small white card
 // so it reads cleanly against the aged-paper page background around it.
+//
+// Always the darius.life-hosted copy (the public static build), by absolute
+// URL, never a relative path: confidential.darius.life is a different
+// Worker with no /assets/* route of its own (a relative path there 404s —
+// this broke the icon there until fixed), and darius.life/bench-entrusted/*
+// resolves the same URL as a harmless same-origin request. One file, one
+// place it's served from, referenced the same way from both Workers.
+export const STENOTYPE_URL = "https://darius.life/assets/bench/stenotype.jpg";
+
 export const STENOTYPE_ICON = (size = 56) =>
-  `<span class="steno-icon" style="width:${size}px;height:${size}px"><img src="/assets/bench/stenotype.jpg" alt="Stenotype machine" width="${size}" height="${size}"></span>`;
+  `<span class="steno-icon" style="width:${size}px;height:${size}px"><img src="${STENOTYPE_URL}" alt="Stenotype machine" width="${size}" height="${size}"></span>`;
 
 const STYLE = `
 :root { color-scheme: light; }
@@ -40,6 +49,18 @@ h2 {
   font-size: 0.95em; margin: 1.8em 0 0.7em; padding-bottom: 0.4em;
   border-bottom: 2px dotted #2A231855; letter-spacing: 0.04em; text-transform: uppercase;
 }
+h3 { font-size: 0.8em; margin: 1.1em 0 0.5em; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.75; }
+.spine { border-left: 3px solid #2A231855; margin: 0 0 0 0.4em; padding-left: 1.1em; }
+.spine .card { position: relative; }
+.spine .card::before {
+  content: ""; position: absolute; left: -1.5em; top: 1em; width: 0.6em; height: 0.6em;
+  border-radius: 50%; background: #2A2318; border: 2px solid #E9E0CC;
+}
+.preview-banner {
+  background: #7A2E1E; color: #F6EFE2; padding: 0.7em 1em; border-radius: 0.3em;
+  margin-bottom: 1.2em; display: flex; justify-content: space-between; align-items: center; gap: 1em;
+}
+.preview-banner a { color: #F6EFE2; font-weight: bold; }
 p.hint { font-size: 0.88em; opacity: 0.75; margin: 0.6em 0 1.2em; }
 .ticker { border-top: 1px dashed #2A231855; margin: 1.6em 0; }
 a { color: #5B3A29; }
@@ -67,7 +88,10 @@ textarea { min-height: 4em; resize: vertical; }
 .error { color: #7A2E1E; font-weight: bold; }
 `;
 
-export const benchPage = (title, body, { csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; script-src 'none'" } = {}) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
+// img-src explicitly allows https://darius.life — the icon is always hosted
+// there (see STENOTYPE_URL above), including on pages served from the
+// different confidential.darius.life origin.
+export const benchPage = (title, body, { csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://darius.life; script-src 'none'" } = {}) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta http-equiv="Content-Security-Policy" content="${csp}">

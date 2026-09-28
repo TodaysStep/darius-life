@@ -18,6 +18,7 @@
 import { requireAccess } from "../../shared/access.js";
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
+import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
 export const PREFIX = "/bench/";
 
@@ -55,12 +56,18 @@ async function listEntries(env, caseId) {
   return results;
 }
 
-async function addEntry(env, { id, caseId, entryDate, fact, recommendedDirection, commentary, courtTakeaways }) {
+async function addEntry(env, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways }) {
   await env.BENCH_NOTES.prepare(
-    `INSERT INTO docket_entries (id, case_id, entry_date, fact, recommended_direction, commentary, court_takeaways)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, caseId, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null).run();
+    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null).run();
   await env.BENCH_NOTES.prepare("UPDATE cases SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").bind(caseId).run();
+}
+
+async function setEntryShared(env, id, shared) {
+  await env.BENCH_NOTES.prepare(
+    `UPDATE docket_entries SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
+  ).bind(id).run();
 }
 
 async function listGlossary(env, caseId) {
@@ -100,10 +107,10 @@ async function listDocuments(env, caseId) {
   return results;
 }
 
-async function addDocument(env, { id, caseId, caseLabel, title, storageRef, filedDate }) {
+async function addDocument(env, { id, caseId, caseLabel, entryId, title, storageRef, filedDate }) {
   await env.BENCH_NOTES.prepare(
-    "INSERT INTO documents (id, case_id, case_label, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind(id, caseId, caseLabel, title, storageRef, filedDate || null).run();
+    "INSERT INTO documents (id, case_id, case_label, entry_id, title, storage_ref, filed_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, caseId, caseLabel, entryId || null, title, storageRef, filedDate || null).run();
 }
 
 async function setDocumentShared(env, id, shared) {
@@ -151,19 +158,39 @@ async function revokeGrant(env, id) {
   ).bind(id).run();
 }
 
-// --- Rendering ---
-
-function renderGrantRow(g) {
-  const caseIds = JSON.parse(g.case_ids_json || "[]");
-  const status = g.revoked_at ? `revoked ${escapeHtml(g.revoked_at)}` : "active";
-  return `<div class="case-row"><span>${escapeHtml(g.label || g.id)} <span class="hint">(${caseIds.length} case${caseIds.length === 1 ? "" : "s"})</span></span><span class="status">${status}${!g.revoked_at ? ` · <form style="display:inline" method="post" action="${PREFIX}grants/${escapeHtml(g.id)}/revoke"><button type="submit">Revoke</button></form>` : ""}</span></div>`;
+async function updateGrantPassphrase(env, id, newCodeHash) {
+  await env.BENCH_NOTES.prepare("UPDATE access_grants SET code_hash = ? WHERE id = ?").bind(newCodeHash, id).run();
 }
 
-function renderCaseList(cases, grants) {
+// --- Rendering ---
+
+// summary: { caseTitles: string[], docCount, entryCount } — computed by the
+// caller (handleBenchGet), since it requires querying shared docs/entries
+// per grant, not something this pure render function should do itself.
+function renderGrantRow(g, summary) {
+  const status = g.revoked_at ? `revoked ${escapeHtml(g.revoked_at)}` : "active";
+  const scope = summary.caseTitles.length ? summary.caseTitles.map(escapeHtml).join(", ") : "no cases";
+  const sharedCount = `${summary.docCount} document${summary.docCount === 1 ? "" : "s"}, ${summary.entryCount} timeline entr${summary.entryCount === 1 ? "y" : "ies"} shared`;
+  return `<div class="card">
+<div class="case-row"><span><strong>${escapeHtml(g.label || g.id)}</strong></span><span class="status">${status}</span></div>
+<p class="hint">Sees: ${scope} — ${sharedCount}</p>
+<div class="case-row">
+${g.revoked_at ? "" : `<a href="${PREFIX}preview/${escapeHtml(g.id)}">Preview their view</a>`}
+${g.revoked_at ? "" : `<form style="display:inline" method="post" action="${PREFIX}grants/${escapeHtml(g.id)}/revoke"><button type="submit">Revoke</button></form>`}
+</div>
+${g.revoked_at ? "" : `<form method="post" action="${PREFIX}grants/${escapeHtml(g.id)}/passphrase">
+<label for="newPassphrase-${escapeHtml(g.id)}">Change passphrase</label>
+<input type="text" id="newPassphrase-${escapeHtml(g.id)}" name="newPassphrase" required>
+<button type="submit">Update</button>
+</form>`}
+</div>`;
+}
+
+function renderCaseList(cases, grants, grantSummaries) {
   const rows = cases.length
     ? cases.map((c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`).join("\n")
     : `<p class="hint">No cases yet — add one below.</p>`;
-  const grantRows = grants.length ? grants.map(renderGrantRow).join("\n") : `<p class="hint">No entrusted access granted yet.</p>`;
+  const grantRows = grants.length ? grants.map((g) => renderGrantRow(g, grantSummaries.get(g.id))).join("\n") : `<p class="hint">No entrusted access granted yet.</p>`;
   const caseCheckboxes = cases.map((c) => `<label class="opt"><input type="checkbox" name="caseIds" value="${escapeHtml(c.id)}"> ${escapeHtml(c.title)}</label>`).join("\n");
 
   return benchPage(
@@ -183,29 +210,33 @@ ${rows}
 <button type="submit">Add case</button>
 </form>
 
-<h2>Entrusted access</h2>
-<p class="hint">Documents-only, password-protected guests — a structurally separate area at <a href="/bench-entrusted/">/bench-entrusted/</a>. Not the same login as this page.</p>
+<h2>Entrusted access — management</h2>
+<p class="hint">Everything currently live on the entrusted side (<a href="/bench-entrusted/">/bench-entrusted/</a>, a structurally separate area, not this login): who has a passphrase, what they can see, and what's actually been shared with them.</p>
 ${grantRows}
+<h3>Add a guest</h3>
 <form method="post" action="${PREFIX}grants">
 <label for="grantLabel">Label (for your own reference)</label>
 <input type="text" id="grantLabel" name="grantLabel" placeholder="e.g. Attorney — family case">
 <label for="passphrase">Passphrase to give them</label>
 <input type="text" id="passphrase" name="passphrase" required>
-<label>Which cases can they see documents for</label>
+<label>Which cases can they see</label>
 <fieldset>${caseCheckboxes || '<p class="hint">Add a case first.</p>'}</fieldset>
 <button type="submit">Grant access</button>
 </form>`,
   );
 }
 
-function renderEntry(e) {
+function renderEntry(base, e, attachedDocs) {
   const layer = (name, value) => (value ? `<div class="entry-layer"><span class="layer-name">${name}</span>${escapeHtml(value)}</div>` : "");
+  const shared = Boolean(e.shared_at);
+  const toggleAction = `${base}/entries/${escapeHtml(e.id)}/${shared ? "unshare" : "share"}`;
   return `<div class="card">
-<span class="entry-date">${escapeHtml(e.entry_date)}</span>
+<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
 <div class="entry-layer"><span class="layer-name">Fact</span>${escapeHtml(e.fact)}</div>
 ${layer("Recommended direction", e.recommended_direction)}
 ${layer("Commentary", e.commentary)}
 ${layer("Court takeaways", e.court_takeaways)}
+${attachedDocs.length ? attachedDocs.map((d) => renderDocumentRow(base, d)).join("\n") : ""}
 </div>`;
 }
 
@@ -227,37 +258,30 @@ function renderNoteRow(n) {
   return `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`;
 }
 
+const truncate = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
 function renderCaseDetail(caseRow, entries, glossary, patterns, documents, notes) {
   const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
+  const docsByEntry = new Map();
+  const generalDocs = [];
+  for (const d of documents) {
+    if (d.entry_id) {
+      if (!docsByEntry.has(d.entry_id)) docsByEntry.set(d.entry_id, []);
+      docsByEntry.get(d.entry_id).push(d);
+    } else generalDocs.push(d);
+  }
+  const entryOptions = entries
+    .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.entry_date)} — ${escapeHtml(truncate(e.fact, 40))}</option>`)
+    .join("\n");
+
   return benchPage(
     caseRow.title,
     `<header class="bench-header">${STENOTYPE_ICON(40)}<h1>${escapeHtml(caseRow.title)}<span class="tag">${escapeHtml(caseRow.status)}${caseRow.case_number ? ` · ${escapeHtml(caseRow.case_number)}` : ""}${caseRow.court ? ` · ${escapeHtml(caseRow.court)}` : ""}</span></h1></header>
 <p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
 
-<h2>Documents</h2>
-<p class="hint">The files themselves live wherever you're storing them (the document viewer, R2). This is only the reference — and the switch that shares it to the entrusted side, which never happens on its own.</p>
-${documents.length ? documents.map((d) => renderDocumentRow(base, d)).join("\n") : `<p class="hint">No documents added yet.</p>`}
-<form method="post" action="${base}/documents">
-<label for="docTitle">Title</label>
-<input type="text" id="docTitle" name="docTitle" required>
-<label for="storageRef">Where it lives (a link or reference)</label>
-<input type="text" id="storageRef" name="storageRef" required>
-<label for="filedDate">Filed date (optional)</label>
-<input type="date" id="filedDate" name="filedDate">
-<button type="submit">Add document</button>
-</form>
-
-<h2>Notes to the entrusted side</h2>
-<p class="hint">Sent to whoever holds a passphrase scoped to this case, immediately — not the same as your own commentary below, which never leaves this page.</p>
-${notes.length ? notes.map(renderNoteRow).join("\n") : `<p class="hint">No notes sent yet.</p>`}
-<form method="post" action="${base}/notes">
-<label for="noteBody">Note</label>
-<textarea id="noteBody" name="noteBody" required></textarea>
-<button type="submit">Send note</button>
-</form>
-
 <h2>Timeline</h2>
-${entries.length ? entries.map(renderEntry).join("\n") : `<p class="hint">No entries yet.</p>`}
+<p class="hint">Chronological, dated. Each entry can be shared to the entrusted side on its own — sharing shows only the date and the fact, never your recommended direction, commentary, or court takeaways.</p>
+${entries.length ? `<div class="spine">${entries.map((e) => renderEntry(base, e, docsByEntry.get(e.id) || [])).join("\n")}</div>` : `<p class="hint">No entries yet.</p>`}
 <div class="ticker"></div>
 <h2>Add a docket entry</h2>
 <form method="post" action="${base}/entries">
@@ -272,6 +296,33 @@ ${entries.length ? entries.map(renderEntry).join("\n") : `<p class="hint">No ent
 <label for="courtTakeaways">Court takeaways (optional)</label>
 <textarea id="courtTakeaways" name="courtTakeaways"></textarea>
 <button type="submit">Add entry</button>
+</form>
+
+<h2>Documents</h2>
+<p class="hint">The files themselves live wherever you're storing them (the document viewer, R2). This is only the reference — and the switch that shares it to the entrusted side, which never happens on its own. A document tied to a timeline entry (below) shows under that entry instead of here.</p>
+${generalDocs.length ? generalDocs.map((d) => renderDocumentRow(base, d)).join("\n") : `<p class="hint">No general documents added yet.</p>`}
+<form method="post" action="${base}/documents">
+<label for="docTitle">Title</label>
+<input type="text" id="docTitle" name="docTitle" required>
+<label for="storageRef">Where it lives (a link or reference)</label>
+<input type="text" id="storageRef" name="storageRef" required>
+<label for="filedDate">Filed date (optional)</label>
+<input type="date" id="filedDate" name="filedDate">
+<label for="entryId">Attach to a timeline entry (optional)</label>
+<select id="entryId" name="entryId">
+<option value="">General — not tied to one entry</option>
+${entryOptions}
+</select>
+<button type="submit">Add document</button>
+</form>
+
+<h2>Notes to the entrusted side</h2>
+<p class="hint">Sent to whoever holds a passphrase scoped to this case, immediately — not the same as your own commentary above, which never leaves this page.</p>
+${notes.length ? notes.map(renderNoteRow).join("\n") : `<p class="hint">No notes sent yet.</p>`}
+<form method="post" action="${base}/notes">
+<label for="noteBody">Note</label>
+<textarea id="noteBody" name="noteBody" required></textarea>
+<button type="submit">Send note</button>
 </form>
 
 <h2>Glossary</h2>
@@ -312,7 +363,42 @@ export async function handleBenchGet(request, env, url) {
   try {
     if (path === "") {
       const [cases, grants] = await Promise.all([listCases(env), listGrants(env)]);
-      return html(renderCaseList(cases, grants));
+      const caseTitleById = new Map(cases.map((c) => [c.id, c.title]));
+      const grantSummaries = new Map();
+      await Promise.all(
+        grants.map(async (g) => {
+          const caseIds = JSON.parse(g.case_ids_json || "[]");
+          const [docs, entries] = await Promise.all([
+            listSharedDocuments(env.BENCH_NOTES, caseIds),
+            listSharedEntries(env.BENCH_NOTES, caseIds),
+          ]);
+          grantSummaries.set(g.id, {
+            caseTitles: caseIds.map((id) => caseTitleById.get(id) || id),
+            docCount: docs.length,
+            entryCount: entries.length,
+          });
+        }),
+      );
+      return html(renderCaseList(cases, grants, grantSummaries));
+    }
+
+    const previewMatch = path.match(/^preview\/([^/]+)$/);
+    if (previewMatch) {
+      const grant = await env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE id = ?").bind(previewMatch[1]).first();
+      if (!grant || grant.revoked_at) return notFound();
+      const caseIds = JSON.parse(grant.case_ids_json || "[]");
+      const [documents, notes, entries] = await Promise.all([
+        listSharedDocuments(env.BENCH_NOTES, caseIds),
+        listNotesForCases(env.BENCH_NOTES, caseIds),
+        listSharedEntries(env.BENCH_NOTES, caseIds),
+      ]);
+      const banner = `<div class="preview-banner"><span>Previewing as: <strong>${escapeHtml(grant.label || grant.id)}</strong> — read-only, no session created</span><a href="${PREFIX}">&larr; Back to your view</a></div>`;
+      return html(
+        benchPage(
+          "Preview — Bench Notes",
+          `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access (preview)</span></h1></header>${renderEntrustedView(documents, notes, entries, { previewBanner: banner })}`,
+        ),
+      );
     }
 
     const caseMatch = path.match(/^case\/([^/]+)$/);
@@ -353,19 +439,29 @@ export async function handleBenchPost(request, env, url) {
     const entriesMatch = path.match(/^case\/([^/]+)\/entries$/);
     if (entriesMatch) {
       const caseId = entriesMatch[1];
-      if (!(await getCase(env, caseId))) return notFound();
+      const caseRow = await getCase(env, caseId);
+      if (!caseRow) return notFound();
       const entryDate = form.get("entryDate");
       const fact = form.get("fact");
       if (!entryDate || !fact) return html(errorPage("A docket entry needs a date and a fact."), 400);
       await addEntry(env, {
         id: crypto.randomUUID(),
         caseId,
+        caseLabel: caseRow.title,
         entryDate,
         fact,
         recommendedDirection: form.get("recommendedDirection"),
         commentary: form.get("commentary"),
         courtTakeaways: form.get("courtTakeaways"),
       });
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
+    const entryShareMatch = path.match(/^case\/([^/]+)\/entries\/([^/]+)\/(share|unshare)$/);
+    if (entryShareMatch) {
+      const [, caseId, entryId, action] = entryShareMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      await setEntryShared(env, entryId, action === "share");
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -400,7 +496,7 @@ export async function handleBenchPost(request, env, url) {
       const title = form.get("docTitle");
       const storageRef = form.get("storageRef");
       if (!title || !storageRef) return html(errorPage("A document needs a title and where it lives."), 400);
-      await addDocument(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, title, storageRef, filedDate: form.get("filedDate") });
+      await addDocument(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, entryId: form.get("entryId"), title, storageRef, filedDate: form.get("filedDate") });
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
@@ -435,6 +531,14 @@ export async function handleBenchPost(request, env, url) {
     const revokeMatch = path.match(/^grants\/([^/]+)\/revoke$/);
     if (revokeMatch) {
       await revokeGrant(env, revokeMatch[1]);
+      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+    }
+
+    const passphraseMatch = path.match(/^grants\/([^/]+)\/passphrase$/);
+    if (passphraseMatch) {
+      const newPassphrase = form.get("newPassphrase");
+      if (!newPassphrase || newPassphrase.length < 6) return html(errorPage("Passphrase must be at least 6 characters."), 400);
+      await updateGrantPassphrase(env, passphraseMatch[1], await sha256Hex(newPassphrase));
       return Response.redirect(`https://darius.life${PREFIX}`, 303);
     }
 

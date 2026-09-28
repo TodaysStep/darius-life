@@ -1,15 +1,19 @@
-// darius.life/bench-entrusted/* — Bench Notes entrusted side. Documents-only,
-// manually shared, one universal passphrase per grant, revocable. This is a
-// SIBLING path to /bench/*, not a subpath of it (see wrangler.toml), and this
-// module is deliberately isolated: it has no import of, and no query against,
-// cases, docket_entries, patterns, or glossary_terms — the working side's
-// confidential tables. The only tables it ever touches are access_grants
-// (to check a passphrase and confirm it hasn't been revoked), documents, and
-// entrusted_notes — both of the latter only rows Darius has explicitly
-// shared. There is no Cloudflare Access gate here: guests have no Access
-// identity, so this module is its own complete authentication boundary.
+// darius.life/bench-entrusted/* — Bench Notes entrusted side. Documents and
+// shared timeline entries, manually shared, one universal passphrase per
+// grant, revocable. This is a SIBLING path to /bench/*, not a subpath of it
+// (see wrangler.toml). This module never queries cases, patterns, or
+// glossary_terms at all, and its only access to docket_entries is through
+// listSharedEntries in workers/shared/bench-entrusted-view.js — a single
+// hardcoded query that can only ever return fact/entry_date for entries
+// Darius has explicitly shared, never recommended_direction, commentary, or
+// court_takeaways. The rendering itself (renderEntrustedView) is the exact
+// same function the working side's preview calls, so a preview can never
+// drift from what a real guest sees. There is no Cloudflare Access gate
+// here: guests have no Access identity, so this module is its own complete
+// authentication boundary.
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex, signSession, verifySession } from "../../shared/bench-crypto.js";
+import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
 export const PREFIX = "/bench-entrusted/";
 const COOKIE_NAME = "bench_entrusted_session";
@@ -31,8 +35,9 @@ function setCookieHeader(value, maxAgeSeconds) {
   return `${COOKIE_NAME}=${value}; Path=${PREFIX}; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
 }
 
-// --- D1 access — the only functions in this file, and the only tables this
-// whole module is allowed to know about: access_grants, documents, entrusted_notes ---
+// --- D1 access — access_grants is the only table this file itself ever
+// queries; documents/entrusted_notes/docket_entries all go through the
+// shared, hardcoded query functions imported above. ---
 
 async function getGrant(env, id) {
   return env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE id = ?").bind(id).first();
@@ -40,24 +45,6 @@ async function getGrant(env, id) {
 
 async function findActiveGrantByCodeHash(env, codeHash) {
   return env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE code_hash = ? AND revoked_at IS NULL").bind(codeHash).first();
-}
-
-async function listSharedDocuments(env, caseIds) {
-  if (caseIds.length === 0) return [];
-  const placeholders = caseIds.map(() => "?").join(",");
-  const { results } = await env.BENCH_NOTES.prepare(
-    `SELECT * FROM documents WHERE shared_at IS NOT NULL AND case_id IN (${placeholders}) ORDER BY case_label, created_at DESC`,
-  ).bind(...caseIds).all();
-  return results;
-}
-
-async function listNotesForCases(env, caseIds) {
-  if (caseIds.length === 0) return [];
-  const placeholders = caseIds.map(() => "?").join(",");
-  const { results } = await env.BENCH_NOTES.prepare(
-    `SELECT * FROM entrusted_notes WHERE case_id IN (${placeholders}) ORDER BY created_at DESC`,
-  ).bind(...caseIds).all();
-  return results;
 }
 
 // --- Rendering ---
@@ -76,38 +63,11 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
   );
 }
 
-function groupByCaseLabel(rows) {
-  const groups = new Map();
-  for (const row of rows) {
-    if (!groups.has(row.case_label)) groups.set(row.case_label, []);
-    groups.get(row.case_label).push(row);
-  }
-  return groups;
-}
-
-function renderPortal(documents, notes) {
-  const docGroups = groupByCaseLabel(documents);
-  const noteGroups = groupByCaseLabel(notes);
-  const caseLabels = [...new Set([...docGroups.keys(), ...noteGroups.keys()])].sort();
-
-  const sections = caseLabels.length
-    ? caseLabels
-        .map((label) => {
-          const docs = docGroups.get(label) || [];
-          const theseNotes = noteGroups.get(label) || [];
-          const docRows = docs.length
-            ? docs.map((d) => `<div class="case-row"><a href="${escapeHtml(d.storage_ref)}">${escapeHtml(d.title)}</a>${d.filed_date ? `<span class="status">${escapeHtml(d.filed_date)}</span>` : ""}</div>`).join("\n")
-            : `<p class="hint">No documents shared yet.</p>`;
-          const noteRows = theseNotes.map((n) => `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`).join("\n");
-          return `<h2>${escapeHtml(label)}</h2>\n${docRows}\n${noteRows}`;
-        })
-        .join("\n<div class=\"ticker\"></div>\n")
-    : `<p class="hint">Nothing has been shared with you yet.</p>`;
-
+function renderPortal(documents, notes, entries) {
   return benchPage(
     "Bench Notes — Entrusted access",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access</span></h1></header>
-${sections}
+${renderEntrustedView(documents, notes, entries)}
 <div class="ticker"></div>
 <form method="post" action="${PREFIX}logout"><button type="submit">Sign out</button></form>`,
   );
@@ -132,8 +92,12 @@ export async function handleBenchEntrustedGet(request, env, url) {
   }
 
   const caseIds = JSON.parse(grant.case_ids_json || "[]");
-  const [documents, notes] = await Promise.all([listSharedDocuments(env, caseIds), listNotesForCases(env, caseIds)]);
-  return html(renderPortal(documents, notes));
+  const [documents, notes, entries] = await Promise.all([
+    listSharedDocuments(env.BENCH_NOTES, caseIds),
+    listNotesForCases(env.BENCH_NOTES, caseIds),
+    listSharedEntries(env.BENCH_NOTES, caseIds),
+  ]);
+  return html(renderPortal(documents, notes, entries));
 }
 
 export async function handleBenchEntrustedPost(request, env, url) {
@@ -162,4 +126,4 @@ export async function handleBenchEntrustedPost(request, env, url) {
   return notFound();
 }
 
-export const _internal = { renderLogin, renderPortal, groupByCaseLabel };
+export const _internal = { renderLogin, renderPortal };
