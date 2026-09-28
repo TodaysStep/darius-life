@@ -1,11 +1,23 @@
-# Serves two darius.life routes, neither trusting Cloudflare Access alone —
-# each independently verifies the Access JWT itself (see src/access.js) before
+# Serves darius.life routes, neither trusting Cloudflare Access alone — each
+# independently verifies the Access JWT itself (see src/access.js) before
 # doing anything else:
 #   - /legal/private/*  the private legal area, reading from R2 (src/legal.js)
 #   - /control/*        Darius's own status/projects control panel (src/control.js),
 #                        which commits data/status.json and data/projects.json
 #                        back to this repo's main branch via the GitHub API —
 #                        see docs/cloudflare-setup.md.
+#   - /bench/*           Bench Notes working side (src/bench-working.js) — Darius's
+#                        own case timeline. Gated by the SAME Access application as
+#                        the two routes above; add darius.life/bench/* as a third
+#                        covered path on it.
+#   - /bench-entrusted/* Bench Notes entrusted side (src/bench-entrusted.js) —
+#                        documents-only, single universal passphrase, NOT behind
+#                        Cloudflare Access (guests have no Access identity, and this
+#                        is a SIBLING path to /bench/*, not a subpath of it, on
+#                        purpose — so an Access application covering darius.life/bench/*
+#                        can never accidentally also cover this one). See that
+#                        file's own header for why it's a structurally separate
+#                        module, not a filtered view of the working side.
 name = "darius-life-private-legal"
 main = "src/index.js"
 compatibility_date = "2026-09-27"
@@ -18,19 +30,38 @@ zone_name = "darius.life"
 pattern = "darius.life/control/*"
 zone_name = "darius.life"
 
+[[routes]]
+pattern = "darius.life/bench/*"
+zone_name = "darius.life"
+
+[[routes]]
+pattern = "darius.life/bench-entrusted/*"
+zone_name = "darius.life"
+
 [[r2_buckets]]
 binding = "PRIVATE_LEGAL"
 bucket_name = "darius-life-private"
 
+[[d1_databases]]
+binding = "BENCH_NOTES"
+database_name = "darius-life-bench-notes"
+database_id = "42490728-b48c-4332-ad61-559ebf589935"
+
 [vars]
 # Set to the real team domain and this Access application's AUD tag before first
 # deploy — see docs/cloudflare-setup.md. Wrong values fail closed (403), not open.
-# The same Access application must also list darius.life/control/* as a covered
-# path (in addition to /legal/private/*) for /control/* to be reachable at all.
+# The same Access application must also list darius.life/control/* AND
+# darius.life/bench/* (never darius.life/bench-entrusted/*, which has no
+# Access identity to check — it's a sibling path, not a subpath, so this is
+# hard to get wrong even by accident) as covered paths for those routes.
 ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
 ACCESS_AUD = "REPLACE-ME"
 GITHUB_REPO = "TodaysStep/darius-life"
 GITHUB_BRANCH = "main"
+# ENTRUSTED_COOKIE_SECRET is a secret, not a var — set with
+# `wrangler secret put ENTRUSTED_COOKIE_SECRET` or via deploy.yml's wrangler-action
+# `secrets` input, same as GH_COMMIT_TOKEN below. Used to HMAC-sign the entrusted
+# side's session cookie; rotating it instantly invalidates every open session.
 # GH_COMMIT_TOKEN is a secret, not a var — set with
 # `wrangler secret put GH_COMMIT_TOKEN` or via deploy.yml's wrangler-action
 # `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).

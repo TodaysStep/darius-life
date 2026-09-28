@@ -52,15 +52,20 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/private-legal
           command: deploy
-          # Uploaded to the Worker as an encrypted secret (wrangler secret put),
-          # not baked into the bundle — the control panel (/control/*) uses it to
-          # read and commit data/status.json and data/projects.json via the
-          # GitHub API. A fine-grained PAT scoped to only this repo, Contents:
-          # Read and write.
+          # Uploaded to the Worker as encrypted secrets (wrangler secret put),
+          # never baked into the bundle. GH_COMMIT_TOKEN: the control panel
+          # (/control/*) uses it to read and commit data/status.json and
+          # data/projects.json via the GitHub API — a fine-grained PAT scoped to
+          # only this repo, Contents: Read and write. ENTRUSTED_COOKIE_SECRET:
+          # HMACs the Bench Notes entrusted-side session cookie
+          # (darius.life/bench-entrusted/*) — any random 32+ byte value works;
+          # rotating it instantly signs out every open entrusted session.
           secrets: |
             GH_COMMIT_TOKEN
+            ENTRUSTED_COOKIE_SECRET
         env:
           GH_COMMIT_TOKEN: ${{ secrets.GH_COMMIT_TOKEN }}
+          ENTRUSTED_COOKIE_SECRET: ${{ secrets.ENTRUSTED_COOKIE_SECRET }}
 
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
