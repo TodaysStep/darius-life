@@ -34,6 +34,13 @@ database_id = "42490728-b48c-4332-ad61-559ebf589935"
 binding = "BENCH_DOCUMENTS"
 bucket_name = "darius-life-private"
 
+# Reads an uploaded document's own text to say what it is and find its case
+# number — see workers/shared/bench-document-ai.js. Cloudflare's own account
+# capability, not a separate API key: nothing to provision, nothing for
+# Darius to go get.
+[ai]
+binding = "AI"
+
 [vars]
 ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
 ACCESS_AUD = "64ae3dd22643411542618705ef6b6d3dd0b034bf3f990ece171ed006bbdb388c"

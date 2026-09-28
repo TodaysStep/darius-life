@@ -41,7 +41,11 @@ CREATE TABLE IF NOT EXISTS docket_entries (
   court_takeaways       TEXT,                -- what the court/filing actually said — working-side only
   shared_at             TEXT,                -- null until Darius manually shares this entry —
                                               -- never automatic, same pattern as documents.shared_at
-  source                TEXT NOT NULL DEFAULT 'manual',  -- manual | green-filing-ingest
+  source                TEXT NOT NULL DEFAULT 'manual',  -- manual | green-filing-ingest |
+                                                          -- upload-ai | upload-unreadable | upload-ai-failed
+                                                          -- (the upload-* values are bench-document-ai.js's
+                                                          -- own read of an uploaded file, not Darius's own
+                                                          -- typed fact — the UI tags these visibly)
   ingest_item_id        TEXT REFERENCES ingest_items(id),
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

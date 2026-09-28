@@ -24,6 +24,21 @@ export async function createCase(db, { id, title, court, caseNumber }) {
   ).bind(id, title, court || null, caseNumber || null).run();
 }
 
+// The one place "which case does an upload belong to" is decided — an
+// existing case by an exact case_number match, or a new one, titled from
+// the number when there is one. Deliberately decoupled from
+// bench-document-ai.js: this function never reads a file or calls AI, only
+// a case number it's handed, so it's testable (and trustworthy) on its own.
+export async function findOrCreateCaseByNumber(db, caseNumber, newCaseId) {
+  if (caseNumber) {
+    const existing = await db.prepare("SELECT * FROM cases WHERE case_number = ?").bind(caseNumber).first();
+    if (existing) return existing;
+  }
+  const title = caseNumber ? `Case ${caseNumber}` : `Untitled — ${new Date().toISOString().slice(0, 10)}`;
+  await createCase(db, { id: newCaseId, title, court: null, caseNumber });
+  return { id: newCaseId, title, case_number: caseNumber || null, status: "open" };
+}
+
 export async function listEntries(db, caseId) {
   const { results } = await db.prepare(
     "SELECT * FROM docket_entries WHERE case_id = ? ORDER BY entry_date DESC, created_at DESC",
@@ -35,19 +50,38 @@ export async function getEntry(db, id) {
   return db.prepare("SELECT * FROM docket_entries WHERE id = ?").bind(id).first();
 }
 
-export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways }) {
+// source distinguishes how a fact reached this table: 'manual' (Darius typed
+// it — the default, and the only value that existed before uploads could
+// fill this in for him) vs. 'upload-ai' / 'upload-unreadable' /
+// 'upload-ai-failed' (workers/shared/bench-document-ai.js's own read of an
+// uploaded document — never silently presented as the same thing as
+// Darius's own typed fact; the UI tags anything non-manual visibly).
+export async function addEntry(db, { id, caseId, caseLabel, entryDate, fact, recommendedDirection, commentary, courtTakeaways, source }) {
   await db.prepare(
-    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null).run();
+    `INSERT INTO docket_entries (id, case_id, case_label, entry_date, fact, recommended_direction, commentary, court_takeaways, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, caseId, caseLabel, entryDate, fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source || "manual").run();
   await db.prepare("UPDATE cases SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").bind(caseId).run();
 }
 
-export async function updateEntry(db, id, { fact, recommendedDirection, commentary, courtTakeaways }) {
-  await db.prepare(
-    `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?,
-     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
-  ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, id).run();
+// source is only touched when the caller explicitly passes it — the machine
+// API's PATCH never has, and shouldn't start silently relabeling a row's
+// provenance. The working-side edit form does pass it (always "manual"),
+// because Darius reviewing and saving an auto-extracted entry is him taking
+// authorship of it — the "auto-extracted" tag should stop showing once he's
+// done that, not linger on text he's since corrected himself.
+export async function updateEntry(db, id, { fact, recommendedDirection, commentary, courtTakeaways, source }) {
+  if (source) {
+    await db.prepare(
+      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?, source = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, source, id).run();
+  } else {
+    await db.prepare(
+      `UPDATE docket_entries SET fact = ?, recommended_direction = ?, commentary = ?, court_takeaways = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+    ).bind(fact, recommendedDirection || null, commentary || null, courtTakeaways || null, id).run();
+  }
 }
 
 export async function setEntryShared(db, id, shared) {

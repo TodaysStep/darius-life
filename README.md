@@ -84,12 +84,23 @@ Darius's own docket:
   same R2 bucket the private legal area already used
   (`darius-life-private`), under a `bench-documents/` prefix.
   **Uploading a document is the default way to start a bench note** — the
-  case list's first form: pick a file, say what it is (required — never
-  inferred), optionally add your own notes (private, never shared), and
-  either name a brand-new case or attach to an existing one. No case
-  number, no court, nothing else required to get started; the longer
-  "add a case" form with those fields is still there, further down, for
-  when you want them on record before there's a document to attach.
+  case list's first form: pick a file, optionally add your own notes
+  (private, never shared), upload. Nothing else. Bench Notes reads the
+  document itself (`workers/shared/bench-document-ai.js`, via Cloudflare
+  Workers AI — an account capability, no separate key) to say what the
+  document is and find its case number in the text, matching an existing
+  case by that number or starting a new one — Darius never types a
+  description or picks a case. A fact that came from that read, not from
+  Darius, is stored with `docket_entries.source` set to `upload-ai` (or
+  `upload-unreadable` if the file had no extractable text, e.g. a scanned
+  image — the upload still succeeds, just untagged with a real read) rather
+  than the default `manual`, and shown with a visible "auto-extracted" tag
+  — never presented as indistinguishable from his own typed fact, which the
+  schema's own rule says is never inferred or fabricated. Opening that
+  entry's **Edit** panel and saving clears the tag: reviewing and correcting
+  it is Darius taking authorship, the same as if he'd typed it himself. The
+  longer "add a case" form (title, court, case number) is still there,
+  further down, for when there's no document yet.
 - An **entrusted-access management area** on the case list page: every
   guest's passphrase grant, which cases they're scoped to, how many
   documents and timeline entries are actually shared with them (computed

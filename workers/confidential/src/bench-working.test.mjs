@@ -39,11 +39,17 @@ async function validToken() {
 function setup(jwk) {
   const fakeD1 = createFakeD1();
   const fakeR2 = createFakeR2();
+  // Real .pdf bytes aren't valid PDFs here, so extractPdfText always throws
+  // and falls back to "unreadable" — this AI binding is never actually
+  // reached by an upload test in this file (bench-document-ai.test.mjs
+  // covers env.AI.run itself, decoupled from real PDF parsing). It's here
+  // so nothing throws "env.AI is not defined" if that ever changes.
+  const fakeAI = { run: async () => ({ response: JSON.stringify({ documentType: "unused", caseNumber: null }) }) };
   globalThis.fetch = async (url) => {
     if (String(url) === `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`) return { ok: true, json: async () => ({ keys: [jwk] }) };
     throw new Error(`unexpected fetch: ${url}`);
   };
-  return { env: { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2 }, fakeD1, fakeR2 };
+  return { env: { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2, AI: fakeAI }, fakeD1, fakeR2 };
 }
 
 const authedRequest = (url, token, opts = {}) =>
@@ -110,14 +116,19 @@ test("adding a document with a javascript: storageRef is rejected and writes not
   assert.equal(fakeD1.tables.documents.length, 0);
 });
 
-test("uploading a document is the default creation path: new case, a docket entry, and the file land together", async () => {
+test("uploading a document is the default creation path: nothing but the file and optional notes required", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1, fakeR2 } = setup(jwk);
 
+  // Fake bytes aren't a real PDF, so this exercises the deterministic
+  // "content couldn't be read" path — bench-document-ai.test.mjs covers the
+  // AI-classification branch on its own, and findOrCreateCaseByNumber's own
+  // tests (workers/shared/bench-data.test.mjs) cover matching an existing
+  // case by a real extracted number. What this proves: the upload route
+  // asks for nothing but a file, still creates a case/entry/document, and
+  // tags the entry so it's never mistaken for Darius's own typed fact.
   const form = new FormData();
   form.append("file", new File(["hello world"], "motion.pdf", { type: "application/pdf" }));
-  form.append("newCaseTitle", "Family matter");
-  form.append("fact", "Received a filing from opposing counsel.");
   form.append("commentary", "Looks routine.");
 
   const req = authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form });
@@ -125,52 +136,41 @@ test("uploading a document is the default creation path: new case, a docket entr
   assert.equal(res.status, 303);
 
   assert.equal(fakeD1.tables.cases.length, 1);
-  assert.equal(fakeD1.tables.cases[0].title, "Family matter");
   assert.equal(fakeD1.tables.cases[0].case_number, null);
+  assert.match(fakeD1.tables.cases[0].title, /^Untitled — \d{4}-\d{2}-\d{2}$/);
+
   assert.equal(fakeD1.tables.docket_entries.length, 1);
-  assert.equal(fakeD1.tables.docket_entries[0].fact, "Received a filing from opposing counsel.");
-  assert.equal(fakeD1.tables.docket_entries[0].commentary, "Looks routine.");
+  const entry = fakeD1.tables.docket_entries[0];
+  assert.match(entry.fact, /couldn't be read automatically/);
+  assert.equal(entry.commentary, "Looks routine.");
+  assert.equal(entry.source, "upload-unreadable");
 
   assert.equal(fakeD1.tables.documents.length, 1);
   const doc = fakeD1.tables.documents[0];
   assert.equal(doc.storage_kind, "upload");
-  assert.equal(doc.entry_id, fakeD1.tables.docket_entries[0].id);
+  assert.equal(doc.entry_id, entry.id);
   assert.equal(fakeR2.objects.size, 1);
   assert.equal(fakeR2.objects.get(doc.storage_ref).bytes.toString(), "hello world");
 });
 
-test("uploading to an existing case does not create a second case", async () => {
+test("notes are the only optional field — leaving them out still uploads cleanly", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1 } = setup(jwk);
-  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
-
   const form = new FormData();
-  form.append("file", new File(["contents"], "notice.pdf", { type: "application/pdf" }));
-  form.append("caseId", "case-1");
-  form.append("fact", "Notice of hearing.");
-
-  const req = authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form });
-  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/upload"));
+  form.append("file", new File(["x"], "notice.pdf", { type: "application/pdf" }));
+  const res = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: form }), env, new URL("https://darius.life/bench/upload"));
   assert.equal(res.status, 303);
-  assert.equal(fakeD1.tables.cases.length, 1);
-  assert.equal(fakeD1.tables.documents[0].case_id, "case-1");
+  assert.equal(fakeD1.tables.docket_entries[0].commentary, null);
 });
 
-test("an upload without a file, or without saying what it is, is rejected and writes nothing", async () => {
+test("an upload with no file at all is rejected and writes nothing", async () => {
   const { token, jwk } = await validToken();
   const { env, fakeD1 } = setup(jwk);
 
-  const noFact = new FormData();
-  noFact.append("file", new File(["x"], "a.pdf"));
-  noFact.append("newCaseTitle", "New case");
-  const res1 = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFact }), env, new URL("https://darius.life/bench/upload"));
-  assert.equal(res1.status, 400);
-
   const noFile = new FormData();
-  noFile.append("newCaseTitle", "New case");
-  noFile.append("fact", "Something");
-  const res2 = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFile }), env, new URL("https://darius.life/bench/upload"));
-  assert.equal(res2.status, 400);
+  noFile.append("commentary", "Something");
+  const res = await handleBenchPost(authedRequest("https://darius.life/bench/upload", token, { method: "POST", body: noFile }), env, new URL("https://darius.life/bench/upload"));
+  assert.equal(res.status, 400);
 
   assert.equal(fakeD1.tables.cases.length, 0);
   assert.equal(fakeD1.tables.documents.length, 0);
@@ -192,6 +192,20 @@ test("GET the uploaded file's own route streams the bytes back with a token, and
 
   const linkRes = await handleBenchGet(authedRequest("https://darius.life/bench/documents/doc-2/file", token), env, new URL("https://darius.life/bench/documents/doc-2/file"));
   assert.equal(linkRes.status, 404);
+});
+
+test("editing an auto-extracted entry clears its tag — reviewing and saving it is Darius taking authorship", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: null, status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.docket_entries.push({ id: "entry-1", case_id: "case-1", case_label: "Family matter", entry_date: "2026-09-28", fact: "guessed wrong", source: "upload-ai", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ fact: "Corrected: it's actually a response to a TRO." });
+  const req = authedRequest("https://darius.life/bench/case/case-1/entries/entry-1/edit", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchPost(req, env, new URL("https://darius.life/bench/case/case-1/entries/entry-1/edit"));
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.docket_entries[0].fact, "Corrected: it's actually a response to a TRO.");
+  assert.equal(fakeD1.tables.docket_entries[0].source, "manual");
 });
 
 test("a docket entry without a fact is rejected and writes nothing", async () => {

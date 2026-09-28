@@ -20,6 +20,7 @@ import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/ben
 import { sha256Hex } from "../../shared/bench-crypto.js";
 import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
+import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
 
 export const PREFIX = "/bench/";
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -43,6 +44,7 @@ const createCase = (env, fields) => data.createCase(env.BENCH_NOTES, fields);
 const listEntries = (env, caseId) => data.listEntries(env.BENCH_NOTES, caseId);
 const addEntry = (env, fields) => data.addEntry(env.BENCH_NOTES, fields);
 const setEntryShared = (env, id, shared) => data.setEntryShared(env.BENCH_NOTES, id, shared);
+const updateEntry = (env, id, fields) => data.updateEntry(env.BENCH_NOTES, id, fields);
 const listGlossary = (env, caseId) => data.listGlossary(env.BENCH_NOTES, caseId);
 const addGlossaryTerm = (env, fields) => data.addGlossaryTerm(env.BENCH_NOTES, fields);
 const listPatterns = (env, caseId) => data.listPatterns(env.BENCH_NOTES, caseId);
@@ -87,7 +89,6 @@ function renderCaseList(cases, grants, grantSummaries) {
     : `<p class="hint">No cases yet — upload a document below, or add one the long way further down.</p>`;
   const grantRows = grants.length ? grants.map((g) => renderGrantRow(g, grantSummaries.get(g.id))).join("\n") : `<p class="hint">No entrusted access granted yet.</p>`;
   const caseCheckboxes = cases.map((c) => `<label class="opt"><input type="checkbox" name="caseIds" value="${escapeHtml(c.id)}"> ${escapeHtml(c.title)}</label>`).join("\n");
-  const caseOptions = cases.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)}</option>`).join("\n");
 
   return benchPage(
     "Bench Notes",
@@ -95,23 +96,15 @@ function renderCaseList(cases, grants, grantSummaries) {
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
 
 <h2>Upload a document</h2>
-<p class="hint">The default way to start a bench note: bring a document in, say what it is, and add your own notes about it. No case number needed to start.</p>
+<p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional.</p>
 <form method="post" action="${PREFIX}upload" enctype="multipart/form-data">
 <label for="uploadFile">Document</label>
 <input type="file" id="uploadFile" name="file" required>
-<label for="uploadCaseId">Case</label>
-<select id="uploadCaseId" name="caseId">
-<option value="">Start a new case</option>
-${caseOptions}
-</select>
-<label for="uploadNewCaseTitle">New case title (only used if you picked "Start a new case")</label>
-<input type="text" id="uploadNewCaseTitle" name="newCaseTitle">
-<label for="uploadFact">What is this document?</label>
-<textarea id="uploadFact" name="fact" required></textarea>
 <label for="uploadCommentary">Your notes about it (optional — private, never shared)</label>
 <textarea id="uploadCommentary" name="commentary"></textarea>
 <button type="submit">Upload</button>
 </form>
+<p class="hint">If the document can't be read automatically (a scanned image with no text layer, for instance), it still uploads — the entry is tagged so you know to fill in the rest yourself from the case page.</p>
 <div class="ticker"></div>
 ${rows}
 
@@ -147,13 +140,32 @@ function renderEntry(base, e, attachedDocs) {
   const layer = (name, value) => (value ? `<div class="entry-layer"><span class="layer-name">${name}</span>${escapeHtml(value)}</div>` : "");
   const shared = Boolean(e.shared_at);
   const toggleAction = `${base}/entries/${escapeHtml(e.id)}/${shared ? "unshare" : "share"}`;
+  const editAction = `${base}/entries/${escapeHtml(e.id)}/edit`;
+  // Anything not typed by Darius himself (an uploaded document Bench Notes
+  // read on its own) is tagged, visibly, every time it's shown — never
+  // presented as indistinguishable from his own fact.
+  const autoTag = e.source && e.source !== "manual" ? `<span class="status">auto-extracted</span>` : "";
   return `<div class="card">
-<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
+<div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${autoTag}${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
 <div class="entry-layer"><span class="layer-name">Fact</span>${escapeHtml(e.fact)}</div>
 ${layer("Recommended direction", e.recommended_direction)}
 ${layer("Commentary", e.commentary)}
 ${layer("Court takeaways", e.court_takeaways)}
 ${attachedDocs.length ? attachedDocs.map((d) => renderDocumentRow(base, d)).join("\n") : ""}
+<details>
+<summary>Edit</summary>
+<form method="post" action="${editAction}">
+<label for="fact-${escapeHtml(e.id)}">Fact</label>
+<textarea id="fact-${escapeHtml(e.id)}" name="fact" required>${escapeHtml(e.fact)}</textarea>
+<label for="recommendedDirection-${escapeHtml(e.id)}">Recommended direction (optional)</label>
+<textarea id="recommendedDirection-${escapeHtml(e.id)}" name="recommendedDirection">${escapeHtml(e.recommended_direction || "")}</textarea>
+<label for="commentary-${escapeHtml(e.id)}">Commentary (optional)</label>
+<textarea id="commentary-${escapeHtml(e.id)}" name="commentary">${escapeHtml(e.commentary || "")}</textarea>
+<label for="courtTakeaways-${escapeHtml(e.id)}">Court takeaways (optional)</label>
+<textarea id="courtTakeaways-${escapeHtml(e.id)}" name="courtTakeaways">${escapeHtml(e.court_takeaways || "")}</textarea>
+<button type="submit">Save changes</button>
+</form>
+</details>
 </div>`;
 }
 
@@ -376,21 +388,14 @@ export async function handleBenchPost(request, env, url) {
       const file = form.get("file");
       if (!file || typeof file === "string" || !file.size) return html(errorPage("Choose a document to upload."), 400);
       if (file.size > MAX_UPLOAD_BYTES) return html(errorPage("Files up to 25 MB are accepted."), 413);
-      const fact = form.get("fact");
-      if (!fact) return html(errorPage("Say what this document is — that's never inferred for you."), 400);
 
-      let caseId = form.get("caseId");
-      let caseRow;
-      if (caseId) {
-        caseRow = await getCase(env, caseId);
-        if (!caseRow) return notFound();
-      } else {
-        const newCaseTitle = form.get("newCaseTitle");
-        if (!newCaseTitle) return html(errorPage("Name the new case, or pick an existing one."), 400);
-        caseId = crypto.randomUUID();
-        caseRow = { id: caseId, title: newCaseTitle };
-        await createCase(env, { id: caseId, title: newCaseTitle, court: null, caseNumber: null });
-      }
+      // The only two things Bench Notes doesn't try to read for itself: the
+      // bytes, and Darius's own optional notes. Everything else — what the
+      // document is, and which case it belongs to — comes from
+      // bench-document-ai.js's own read of the file.
+      const analysis = await analyzeUploadedDocument(env, file);
+      const caseRow = await data.findOrCreateCaseByNumber(env.BENCH_NOTES, analysis.caseNumber, crypto.randomUUID());
+      const caseId = caseRow.id;
 
       const entryId = crypto.randomUUID();
       await addEntry(env, {
@@ -398,8 +403,9 @@ export async function handleBenchPost(request, env, url) {
         caseId,
         caseLabel: caseRow.title,
         entryDate: new Date().toISOString().slice(0, 10),
-        fact,
+        fact: analysis.fact,
         commentary: form.get("commentary"),
+        source: analysis.source,
       });
 
       const docId = crypto.randomUUID();
@@ -436,6 +442,25 @@ export async function handleBenchPost(request, env, url) {
       const [, caseId, entryId, action] = entryShareMatch;
       if (!(await getCase(env, caseId))) return notFound();
       await setEntryShared(env, entryId, action === "share");
+      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+    }
+
+    // Correcting an entry — most useful right after an upload, since an
+    // auto-extracted fact (tagged in the UI) is a machine's read of a
+    // document, not Darius's own testimony, and can be wrong.
+    const entryEditMatch = path.match(/^case\/([^/]+)\/entries\/([^/]+)\/edit$/);
+    if (entryEditMatch) {
+      const [, caseId, entryId] = entryEditMatch;
+      if (!(await getCase(env, caseId))) return notFound();
+      const fact = form.get("fact");
+      if (!fact) return html(errorPage("A docket entry needs a fact."), 400);
+      await updateEntry(env, entryId, {
+        fact,
+        recommendedDirection: form.get("recommendedDirection"),
+        commentary: form.get("commentary"),
+        courtTakeaways: form.get("courtTakeaways"),
+        source: "manual",
+      });
       return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
     }
 
