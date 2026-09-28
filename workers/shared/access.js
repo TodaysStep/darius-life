@@ -1,7 +1,10 @@
-// Shared by every route this Worker serves. Cloudflare Access is the primary
-// gate at the edge, but nothing here trusts that alone: each route independently
-// verifies the Cf-Access-Jwt-Assertion header itself before doing anything else.
-// Any verification failure must result in a 403 with nothing done — fail closed.
+// Shared by every Access-gated route across both darius-life-private-legal
+// and darius-life-confidential. Cloudflare Access is the primary gate at the
+// edge, but nothing here trusts that alone: each route independently
+// verifies the Cf-Access-Jwt-Assertion header itself before doing anything
+// else, against whichever team domain/AUD its own Worker's env supplies —
+// the two Workers use different, unrelated Access applications. Any
+// verification failure must result in a 403 with nothing done — fail closed.
 
 const CERTS_CACHE_TTL_MS = 5 * 60 * 1000;
 let certsCache = null; // { fetchedAt: number, keys: Map<string, CryptoKey> }

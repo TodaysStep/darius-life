@@ -58,39 +58,55 @@ file — both the control panel and a manual edit write only to them.
 
 ## Bench Notes — private case management
 
-`https://darius.life/bench/` is Darius's own docket: cases, dated timeline
-entries carrying four layers at once (fact, recommended direction, his
-commentary, court takeaways), a living glossary, and pattern-spotting on
-judge/opposing-counsel behavior. Data lives in Cloudflare D1
-(`darius-life-bench-notes`), never this repo — same reasoning as the private
-legal area's R2 bucket. Gated by the same Cloudflare Access application as
-`/legal/private/*` and `/control/*` (add `darius.life/bench/*` as a third
-covered path on it).
+Split across two Workers on two hostnames, on purpose, because the two sides
+have genuinely different trust requirements:
 
-`https://darius.life/bench-entrusted/` is a **structurally separate**
-documents-only area for guests Darius manually shares with — a single
-universal passphrase per grant (`workers/private-legal/src/bench-crypto.js`
-hashes it; the plaintext is never stored), revocable at any time from the
-working side, scoped to specific cases. It has no Cloudflare Access gate —
-guests have no Access identity — and its code
-(`src/bench-entrusted.js`) has no import of and no query against
+`https://confidential.darius.life/bench/` (`workers/confidential/`) is
+Darius's own docket: cases, dated timeline entries carrying four layers at
+once (fact, recommended direction, his commentary, court takeaways), a
+living glossary, and pattern-spotting on judge/opposing-counsel behavior.
+Data lives in Cloudflare D1 (`darius-life-bench-notes`), never this repo.
+Gated by a pre-existing Cloudflare Access application ("confidential legal
+area," policy "Allowed readers") that already protected this hostname before
+Bench Notes existed — reused exactly as-is, no changes made to it. That
+application protects the Worker's entire production/preview URL at the edge
+(not a specific path), so `bench-working.js` still independently re-verifies
+the Access JWT itself (`workers/shared/access.js`) as defense in depth, same
+as every other gated route in this repo, even though Access has already
+checked once.
+
+`https://darius.life/bench-entrusted/` (`workers/private-legal/`) is a
+**structurally separate** documents-only area for guests Darius manually
+shares with — a single universal passphrase per grant
+(`workers/shared/bench-crypto.js` hashes it; the plaintext is never stored),
+revocable at any time from the working side, scoped to specific cases. It
+has no Cloudflare Access gate — guests have no Access identity, and it
+*can't* live behind confidential.darius.life's Access application even if it
+wanted to, since that application gates the whole Worker regardless of path.
+Its code (`src/bench-entrusted.js`) has no import of and no query against
 `cases`, `docket_entries`, `patterns`, or `glossary_terms`; it can only ever
-reach `access_grants`, `documents`, and `entrusted_notes`. That is what makes
-it structurally separate rather than a filtered view: there's no query in
-that file capable of reaching the confidential tables, not just a filter that
-happens not to show them. See `workers/private-legal/schema/bench-notes.sql`
+reach `access_grants`, `documents`, and `entrusted_notes` — both sides bind
+the same D1 database, but each Worker's source tree only contains the query
+functions for its own tables. That is what makes it structurally separate
+rather than a filtered view. See `workers/shared/schema/bench-notes.sql`
 for the full data model and its own confidentiality notes.
 
-**Known gap as of 2026-09-28:** verified directly against the Cloudflare API
-(`/accounts/{id}/access/apps` returns zero results, zero identity providers
-too) that no Cloudflare Access application actually exists on this account
-yet, despite `/legal/private/*` and `/control/*` already being built against
-one. Until an Access application is created (Zero Trust → Access →
-Applications → Add → Self-hosted, covering `darius.life/legal/private/*`,
-`darius.life/control/*`, and `darius.life/bench/*`) and
-`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` in `workers/private-legal/wrangler.toml`
-are set to its real values, all three routes fail closed for everyone,
-Darius included — which is the safe default, but not yet a working gate.
+**How this Access application was found, for the record (2026-09-28):** an
+earlier pass concluded no Cloudflare Access application existed at all,
+because `/accounts/{id}/access/apps` returns zero results with the API token
+available here — that token genuinely cannot list or manage Access
+applications. That conclusion was wrong: the application already existed,
+created via the dashboard, protecting a Worker-scoped destination rather
+than a path on `darius.life` itself. It surfaced by requesting the Worker's
+custom domain directly and reading the real team domain and AUD tag straight
+out of the resulting Access login redirect's own JWT — `dreamstep.
+cloudflareaccess.com` and the AUD tag now hardcoded in
+`workers/confidential/wrangler.toml`, not placeholders. The domain itself
+had a typo (`condifential.darius.life`) that was corrected to
+`confidential.darius.life` via the Workers Custom Domains API the same day.
+`/legal/private/*` and `/control/*` on `darius.life` still use a genuinely
+different Access application, whose real values are still unconfirmed — see
+`workers/private-legal/wrangler.toml`.
 
 ## Status and project lights
 

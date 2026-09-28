@@ -68,7 +68,7 @@ jobs:
       # 32+ byte value works; rotating it instantly signs out every open
       # Bench Notes entrusted session). Until it's added, this step is a no-op
       # and the entrusted side simply has no signing key — see
-      # src/bench-crypto.js — rather than blocking every other deploy.
+      # workers/shared/bench-crypto.js — rather than blocking every other deploy.
       - name: Upload the Bench Notes entrusted-side cookie secret, if set
         if: ${{ env.ENTRUSTED_COOKIE_SECRET != '' }}
         working-directory: workers/private-legal
@@ -78,11 +78,28 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ENTRUSTED_COOKIE_SECRET: ${{ secrets.ENTRUSTED_COOKIE_SECRET }}
 
+  deploy-confidential-worker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/confidential
+          command: deploy
+          # No secrets to upload — Bench Notes' working side needs no
+          # credential of its own; it reads/writes only the shared D1
+          # database, and confidentiality is enforced by the pre-existing
+          # Cloudflare Access application on confidential.darius.life
+          # itself, reused as-is (see workers/confidential/wrangler.toml).
+
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
     # regression fails this job, which fails the workflow, which notifies. The
     # daily-only run (verify-live.yml) is the one that reports without blocking.
-    needs: [deploy-pages, deploy-worker]
+    needs: [deploy-pages, deploy-worker, deploy-confidential-worker]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

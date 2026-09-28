@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
-import { createFakeD1 } from "./test-fake-d1.mjs";
-import { sha256Hex } from "./bench-crypto.js";
+import { createFakeD1 } from "../../shared/test-fake-d1.mjs";
+import { sha256Hex } from "../../shared/bench-crypto.js";
 
 const SECRET = "test-entrusted-secret";
 

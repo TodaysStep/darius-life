@@ -8,8 +8,8 @@
 // entrusted_notes — both of the latter only rows Darius has explicitly
 // shared. There is no Cloudflare Access gate here: guests have no Access
 // identity, so this module is its own complete authentication boundary.
-import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "./bench-style.js";
-import { sha256Hex, signSession, verifySession } from "./bench-crypto.js";
+import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
+import { sha256Hex, signSession, verifySession } from "../../shared/bench-crypto.js";
 
 export const PREFIX = "/bench-entrusted/";
 const COOKIE_NAME = "bench_entrusted_session";

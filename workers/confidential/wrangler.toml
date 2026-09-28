@@ -1,0 +1,31 @@
+# Serves confidential.darius.life — Bench Notes' working side only
+# (Darius's own private docket: cases, four-layer timeline entries, glossary,
+# pattern-spotting). This Worker (darius-life-confidential) already existed
+# with a real, dashboard-created Cloudflare Access application ("confidential
+# legal area", policy "Allowed readers") protecting its entire production/
+# preview URL — reused here exactly as-is, no changes made to that
+# application. ACCESS_TEAM_DOMAIN/ACCESS_AUD below are real, verified values
+# decoded directly from that application's own live Access login redirect
+# (2026-09-28), not placeholders.
+#
+# The custom domain itself was previously attached under a typo
+# (condifential.darius.life) — corrected to confidential.darius.life via the
+# Workers Custom Domains API on 2026-09-28; declaring it here too so future
+# `wrangler deploy` runs keep it attached rather than depending on that
+# one-off API call.
+name = "darius-life-confidential"
+main = "src/index.js"
+compatibility_date = "2026-09-28"
+
+[[routes]]
+pattern = "confidential.darius.life"
+custom_domain = true
+
+[[d1_databases]]
+binding = "BENCH_NOTES"
+database_name = "darius-life-bench-notes"
+database_id = "42490728-b48c-4332-ad61-559ebf589935"
+
+[vars]
+ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
+ACCESS_AUD = "64ae3dd22643411542618705ef6b6d3dd0b034bf3f990ece171ed006bbdb388c"

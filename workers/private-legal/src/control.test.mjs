@@ -4,7 +4,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { handleControlGet, handleControlPost, _internal } from "./control.js";
-import { resetCertsCacheForTests } from "./access.js";
+import { resetCertsCacheForTests } from "../../shared/access.js";
 
 beforeEach(() => resetCertsCacheForTests());
 

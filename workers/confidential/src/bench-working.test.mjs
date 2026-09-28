@@ -1,8 +1,8 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { handleBenchGet, handleBenchPost } from "./bench-working.js";
-import { resetCertsCacheForTests } from "./access.js";
-import { createFakeD1 } from "./test-fake-d1.mjs";
+import { resetCertsCacheForTests } from "../../shared/access.js";
+import { createFakeD1 } from "../../shared/test-fake-d1.mjs";
 
 beforeEach(() => resetCertsCacheForTests());
 

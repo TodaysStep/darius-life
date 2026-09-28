@@ -10,7 +10,7 @@
 // and deploy pipeline (.github/workflows/deploy.yml) as any other change. That
 // is what makes it live within a few minutes, not instantly: it is a real build,
 // not a bypass of one.
-import { requireAccess } from "./access.js";
+import { requireAccess } from "../../shared/access.js";
 
 export const PREFIX = "/control/";
 

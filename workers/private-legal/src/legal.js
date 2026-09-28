@@ -1,6 +1,6 @@
 // Serves darius.life/legal/private/* from R2. See src/access.js for the Access
 // JWT verification this route relies on before ever touching R2.
-import { requireAccess } from "./access.js";
+import { requireAccess } from "../../shared/access.js";
 
 export const PREFIX = "/legal/private/";
 const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

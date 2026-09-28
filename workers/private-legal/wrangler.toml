@@ -6,18 +6,16 @@
 #                        which commits data/status.json and data/projects.json
 #                        back to this repo's main branch via the GitHub API —
 #                        see docs/cloudflare-setup.md.
-#   - /bench/*           Bench Notes working side (src/bench-working.js) — Darius's
-#                        own case timeline. Gated by the SAME Access application as
-#                        the two routes above; add darius.life/bench/* as a third
-#                        covered path on it.
 #   - /bench-entrusted/* Bench Notes entrusted side (src/bench-entrusted.js) —
 #                        documents-only, single universal passphrase, NOT behind
-#                        Cloudflare Access (guests have no Access identity, and this
-#                        is a SIBLING path to /bench/*, not a subpath of it, on
-#                        purpose — so an Access application covering darius.life/bench/*
-#                        can never accidentally also cover this one). See that
-#                        file's own header for why it's a structurally separate
-#                        module, not a filtered view of the working side.
+#                        Cloudflare Access (guests have no Access identity). See
+#                        that file's own header for why it's a structurally
+#                        separate module, not a filtered view of the working side.
+#
+# Bench Notes' working side used to live here too (darius.life/bench/*) but
+# moved on 2026-09-28 to its own Worker on confidential.darius.life
+# (../confidential/), to reuse that hostname's pre-existing Cloudflare Access
+# application instead of adding a third covered path to this one.
 name = "darius-life-private-legal"
 main = "src/index.js"
 compatibility_date = "2026-09-27"
@@ -28,10 +26,6 @@ zone_name = "darius.life"
 
 [[routes]]
 pattern = "darius.life/control/*"
-zone_name = "darius.life"
-
-[[routes]]
-pattern = "darius.life/bench/*"
 zone_name = "darius.life"
 
 [[routes]]
@@ -50,10 +44,11 @@ database_id = "42490728-b48c-4332-ad61-559ebf589935"
 [vars]
 # Set to the real team domain and this Access application's AUD tag before first
 # deploy — see docs/cloudflare-setup.md. Wrong values fail closed (403), not open.
-# The same Access application must also list darius.life/control/* AND
-# darius.life/bench/* (never darius.life/bench-entrusted/*, which has no
-# Access identity to check — it's a sibling path, not a subpath, so this is
-# hard to get wrong even by accident) as covered paths for those routes.
+# The same Access application must also list darius.life/control/* as a
+# covered path (in addition to /legal/private/*) for /control/* to be
+# reachable at all. Never darius.life/bench-entrusted/*, which has no Access
+# identity to check. (Also note: this is a DIFFERENT Access application from
+# the one protecting confidential.darius.life — do not conflate the two.)
 ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
 ACCESS_AUD = "REPLACE-ME"
 GITHUB_REPO = "TodaysStep/darius-life"

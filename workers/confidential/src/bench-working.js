@@ -1,17 +1,23 @@
-// darius.life/bench/* — Bench Notes working side. Darius's own private docket:
-// cases, dated timeline entries carrying four simultaneous layers (fact,
-// recommended direction, his commentary, court takeaways), a living glossary,
-// and pattern-spotting on judge/opposing-counsel behavior.
+// confidential.darius.life/bench/* — Bench Notes working side. Darius's own
+// private docket: cases, dated timeline entries carrying four simultaneous
+// layers (fact, recommended direction, his commentary, court takeaways), a
+// living glossary, and pattern-spotting on judge/opposing-counsel behavior.
 //
-// Gated by the same Cloudflare Access application as /legal/private/* and
-// /control/* — see src/access.js. This module and bench-entrusted.js
-// deliberately share no query helper: this file is the only place in the
-// whole Worker that ever reads or writes cases, docket_entries, patterns, or
-// glossary_terms. That is what keeps the entrusted side structurally unable
-// to reach this data, rather than merely filtered away from it.
-import { requireAccess } from "./access.js";
-import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "./bench-style.js";
-import { sha256Hex } from "./bench-crypto.js";
+// Gated by the pre-existing Cloudflare Access application that already
+// protected confidential.darius.life ("confidential legal area," policy
+// "Allowed readers") — reused as-is; see workers/confidential/wrangler.toml
+// for how its real team domain/AUD were found. requireAccess below is this
+// module's own independent re-check of the Access JWT, same defense-in-depth
+// pattern as every other gated route in this repo (workers/shared/access.js).
+// This module and bench-entrusted.js (a different Worker entirely — see its
+// own header) deliberately share no query helper: this file is the only
+// place in either Worker that ever reads or writes cases, docket_entries,
+// patterns, or glossary_terms. That is what keeps the entrusted side
+// structurally unable to reach this data, rather than merely filtered away
+// from it.
+import { requireAccess } from "../../shared/access.js";
+import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
+import { sha256Hex } from "../../shared/bench-crypto.js";
 
 export const PREFIX = "/bench/";
 
