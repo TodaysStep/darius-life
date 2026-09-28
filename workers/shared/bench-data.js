@@ -540,3 +540,91 @@ export async function searchAll(db, { query, contentType, entryKind } = {}) {
     notes: notes.filter((n) => matchesQuery(query, n.body)).map(withCaseTitle),
   };
 }
+
+// --- Prep sessions (rehearsal for a hearing or a design presentation/meeting) ---
+//
+// One shared table, two kinds — see the schema's own comment on
+// prep_sessions for why this is one area rather than two separate features.
+
+export async function listPrepSessions(db) {
+  const { results } = await db.prepare(
+    "SELECT * FROM prep_sessions ORDER BY event_date ASC, created_at DESC",
+  ).all();
+  return results;
+}
+
+export async function getPrepSession(db, id) {
+  return db.prepare("SELECT * FROM prep_sessions WHERE id = ?").bind(id).first();
+}
+
+export async function addPrepSession(db, { id, kind, title, caseId, eventDate, context }) {
+  await db.prepare(
+    "INSERT INTO prep_sessions (id, kind, title, case_id, event_date, context) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind(id, kind, title, caseId || null, eventDate || null, context || null).run();
+}
+
+// bench-prep.js's own output — see that module and the schema's own comment
+// on prep_sessions.pressure_test for what this is (and, just as much, what
+// it never is: never advice, never a prediction). Only ever written by
+// Darius's own deliberate "Generate pressure test" action, never in the
+// background, so pressure_test_updated_at always means he asked for this.
+export async function updatePrepSessionPressureTest(db, id, pressureTest) {
+  await db.prepare(
+    `UPDATE prep_sessions SET pressure_test = ?, pressure_test_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+  ).bind(pressureTest, id).run();
+}
+
+export async function deletePrepSession(db, id) {
+  await db.prepare("DELETE FROM prep_sessions WHERE id = ?").bind(id).run();
+}
+
+// --- Scripture: curated verse set + daily pick ---
+//
+// The curated set is Darius's own — see the schema's own comment on
+// scripture_verses for the anti-hallucination reason this table exists at
+// all: bench-verse.js only ever picks among these rows, never composes its
+// own verse text.
+
+export async function listScriptureVerses(db) {
+  const { results } = await db.prepare(
+    "SELECT * FROM scripture_verses ORDER BY created_at ASC",
+  ).all();
+  return results;
+}
+
+export async function addScriptureVerse(db, { id, reference, translation, text, tags }) {
+  await db.prepare(
+    "INSERT INTO scripture_verses (id, reference, translation, text, tags) VALUES (?, ?, ?, ?, ?)",
+  ).bind(id, reference, translation, text, tags || "").run();
+}
+
+export async function deleteScriptureVerse(db, id) {
+  await db.prepare("DELETE FROM scripture_verses WHERE id = ?").bind(id).run();
+}
+
+// Today's pick, joined with the verse it actually points at — the verse's
+// own text/reference/translation always come from scripture_verses itself,
+// never from daily_verses or from anything the AI returned directly (see
+// bench-verse.js). Null if no pick has been made yet for this date.
+export async function getDailyVerse(db, date) {
+  const pick = await db.prepare("SELECT * FROM daily_verses WHERE date = ?").bind(date).first();
+  if (!pick) return null;
+  const verse = await db.prepare("SELECT * FROM scripture_verses WHERE id = ?").bind(pick.verse_id).first();
+  if (!verse) return null; // the verse it pointed at was since deleted — treat as no pick yet
+  return { date: pick.date, rationale: pick.rationale, verse };
+}
+
+// Called once per calendar date, the first time it's needed (see
+// bench-working.js's lazy home-page computation) — verseId must already be
+// one of scripture_verses.id; bench-verse.js validates that itself before
+// ever calling this, so this function trusts it rather than re-checking.
+// OR REPLACE rather than plain INSERT: a manual "pick again for today"
+// (bench-working.js) calls this a second time for the same date, and that
+// should cleanly replace the earlier pick, not fail on the date's own
+// primary key.
+export async function setDailyVerse(db, { date, verseId, rationale }) {
+  await db.prepare(
+    "INSERT OR REPLACE INTO daily_verses (date, verse_id, rationale) VALUES (?, ?, ?)",
+  ).bind(date, verseId, rationale || null).run();
+}

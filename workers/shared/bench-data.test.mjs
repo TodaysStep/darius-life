@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDocument, addDocumentRecording, addEntry, addResource, benchBlobKey, deleteCase, deleteDocument,
-  deleteDocumentRecording, deleteEntry, deleteResource, editRecordingTranscript, findOrCreateCaseByNumber,
+  addDocument, addDocumentRecording, addEntry, addPrepSession, addResource, addScriptureVerse, benchBlobKey,
+  deleteCase, deleteDocument, deleteDocumentRecording, deleteEntry, deletePrepSession, deleteResource,
+  deleteScriptureVerse, editRecordingTranscript, findOrCreateCaseByNumber, getDailyVerse, getPrepSession,
   listCaseBlobRefs, listCaseRecordings, listDocumentAffectingRecordings, listDocumentBlobRefs,
-  listDocumentRecordings, listRecordingAffectedDocuments, listResources, listUpcomingEntries, markDocumentFiled,
-  markDocumentServed, searchAll, setRecordingAffectedDocuments, updateCaseLocalRules, updateEntry,
+  listDocumentRecordings, listPrepSessions, listRecordingAffectedDocuments, listResources, listScriptureVerses,
+  listUpcomingEntries, markDocumentFiled, markDocumentServed, searchAll, setDailyVerse,
+  setRecordingAffectedDocuments, updateCaseLocalRules, updateEntry, updatePrepSessionPressureTest,
   updateRecordingTranscript,
 } from "./bench-data.js";
 import { createFakeD1 } from "./test-fake-d1.mjs";
@@ -356,4 +358,87 @@ test("deleting a case removes every entry, document, recording, glossary term, p
   assert.equal(tables.entrusted_notes.length, 0);
   assert.equal(tables.glossary_terms.length, 1);
   assert.equal(tables.glossary_terms[0].id, "g2");
+});
+
+test("adding a hearing-kind prep session links it to a case; a presentation-kind session stands alone", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  await addPrepSession(BENCH_NOTES, { id: "prep-1", kind: "hearing", title: "TRO hearing prep", caseId: "case-1", eventDate: "2026-10-15", context: "Judge X, opposing counsel raised timeline before." });
+  await addPrepSession(BENCH_NOTES, { id: "prep-2", kind: "presentation", title: "Q4 brand deck", caseId: null, eventDate: "2026-10-02", context: "Client stakeholders, tight timeline, prior deck was rejected on typography." });
+
+  const hearing = await getPrepSession(BENCH_NOTES, "prep-1");
+  assert.equal(hearing.kind, "hearing");
+  assert.equal(hearing.case_id, "case-1");
+
+  const presentation = await getPrepSession(BENCH_NOTES, "prep-2");
+  assert.equal(presentation.kind, "presentation");
+  assert.equal(presentation.case_id, null);
+
+  const all = await listPrepSessions(BENCH_NOTES);
+  assert.equal(all.length, 2);
+});
+
+test("generating a pressure test writes it and stamps pressure_test_updated_at, leaving other fields untouched", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  await addPrepSession(BENCH_NOTES, { id: "prep-1", kind: "hearing", title: "TRO hearing prep", caseId: "case-1", eventDate: "2026-10-15", context: "..." });
+  let session = await getPrepSession(BENCH_NOTES, "prep-1");
+  assert.equal(session.pressure_test, null);
+  assert.equal(session.pressure_test_updated_at, null);
+
+  await updatePrepSessionPressureTest(BENCH_NOTES, "prep-1", "1. What if opposing counsel raises the same timeline objection again?");
+  session = await getPrepSession(BENCH_NOTES, "prep-1");
+  assert.match(session.pressure_test, /timeline objection/);
+  assert.ok(session.pressure_test_updated_at);
+  assert.equal(session.title, "TRO hearing prep");
+});
+
+test("deleting a prep session removes it and nothing else", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addPrepSession(BENCH_NOTES, { id: "prep-1", kind: "presentation", title: "Deck", caseId: null, eventDate: null, context: null });
+  await addPrepSession(BENCH_NOTES, { id: "prep-2", kind: "presentation", title: "Other deck", caseId: null, eventDate: null, context: null });
+  await deletePrepSession(BENCH_NOTES, "prep-1");
+  assert.equal(tables.prep_sessions.length, 1);
+  assert.equal(tables.prep_sessions[0].id, "prep-2");
+});
+
+test("scripture verses can be added, listed, and removed from the curated set", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  await addScriptureVerse(BENCH_NOTES, { id: "v1", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety,peace" });
+  await addScriptureVerse(BENCH_NOTES, { id: "v2", reference: "Joshua 1:9", translation: "WEB", text: "Be strong and courageous...", tags: "courage" });
+  let verses = await listScriptureVerses(BENCH_NOTES);
+  assert.equal(verses.length, 2);
+
+  await deleteScriptureVerse(BENCH_NOTES, "v1");
+  verses = await listScriptureVerses(BENCH_NOTES);
+  assert.equal(verses.length, 1);
+  assert.equal(verses[0].id, "v2");
+});
+
+test("the daily verse is read back joined with the curated verse's own text — never a copy stored separately", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  await addScriptureVerse(BENCH_NOTES, { id: "v1", reference: "Joshua 1:9", translation: "WEB", text: "Be strong and courageous...", tags: "courage" });
+  await setDailyVerse(BENCH_NOTES, { date: "2026-09-28", verseId: "v1", rationale: "Today's docket includes a hearing; this speaks to courage before it." });
+
+  const today = await getDailyVerse(BENCH_NOTES, "2026-09-28");
+  assert.equal(today.verse.reference, "Joshua 1:9");
+  assert.equal(today.verse.text, "Be strong and courageous...");
+  assert.match(today.rationale, /hearing/);
+});
+
+test("no pick yet for a date returns null, never a fabricated default verse", async () => {
+  const { BENCH_NOTES } = createFakeD1();
+  const missing = await getDailyVerse(BENCH_NOTES, "2026-01-01");
+  assert.equal(missing, null);
+});
+
+test("setDailyVerse called twice for the same date cleanly replaces the earlier pick, for a manual re-pick", async () => {
+  const { BENCH_NOTES, tables } = createFakeD1();
+  await addScriptureVerse(BENCH_NOTES, { id: "v1", reference: "Joshua 1:9", translation: "WEB", text: "Be strong...", tags: "courage" });
+  await addScriptureVerse(BENCH_NOTES, { id: "v2", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety" });
+  await setDailyVerse(BENCH_NOTES, { date: "2026-09-28", verseId: "v1", rationale: "First pick." });
+  await setDailyVerse(BENCH_NOTES, { date: "2026-09-28", verseId: "v2", rationale: "Re-picked." });
+
+  assert.equal(tables.daily_verses.length, 1);
+  const today = await getDailyVerse(BENCH_NOTES, "2026-09-28");
+  assert.equal(today.verse.id, "v2");
+  assert.equal(today.rationale, "Re-picked.");
 });

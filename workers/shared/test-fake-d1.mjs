@@ -55,21 +55,22 @@ export function createFakeD1() {
   const tables = {
     cases: [], docket_entries: [], patterns: [], glossary_terms: [],
     documents: [], entrusted_notes: [], access_grants: [], ingest_items: [], document_recordings: [],
-    resources: [], recording_documents: [],
+    resources: [], recording_documents: [], prep_sessions: [], scripture_verses: [], daily_verses: [],
   };
 
-  // Every table but this one is keyed by its own `id` primary key.
-  // recording_documents is a plain many-to-many join table — composite
-  // key (recording_id, document_id), no id column at all.
-  const TABLES_WITHOUT_ID = new Set(["recording_documents"]);
+  // Every table but these is keyed by its own `id` primary key.
+  // recording_documents is a plain many-to-many join table — composite key
+  // (recording_id, document_id), no id column at all. daily_verses is
+  // keyed by its own `date` instead — see the schema's own comment on it.
+  const TABLES_WITHOUT_ID = new Set(["recording_documents", "daily_verses"]);
 
   function exec(sqlRaw, boundArgs) {
     const sql = norm(sqlRaw);
     const args = [...boundArgs];
 
     let m;
-    if ((m = sql.match(/^INSERT INTO (\w+) \(([^)]+)\) VALUES \(([^)]+)\)$/i))) {
-      const [, table, colsRaw] = m;
+    if ((m = sql.match(/^INSERT(?: OR (REPLACE))? INTO (\w+) \(([^)]+)\) VALUES \(([^)]+)\)$/i))) {
+      const [, replace, table, colsRaw] = m;
       const cols = colsRaw.split(",").map((c) => c.trim());
       const row = {};
       cols.forEach((c, i) => { row[c] = args[i]; });
@@ -81,6 +82,14 @@ export function createFakeD1() {
       if (table === "documents") { row.shared_at ??= null; row.filing_status ??= "drafted"; }
       if (table === "document_recordings") row.content_type ??= "note";
       if (table === "access_grants") row.revoked_at ??= null;
+      if (table === "prep_sessions") { row.case_id ??= null; row.event_date ??= null; row.context ??= null; row.pressure_test ??= null; row.pressure_test_updated_at ??= null; row.created_at ??= FAKE_NOW; row.updated_at ??= FAKE_NOW; }
+      if (table === "scripture_verses" || table === "daily_verses") row.created_at ??= FAKE_NOW;
+      if (replace) {
+        // Only daily_verses actually uses OR REPLACE today — keyed by its
+        // own `date` rather than `id`, same exception as TABLES_WITHOUT_ID.
+        const keyCol = table === "daily_verses" ? "date" : "id";
+        tables[table] = tables[table].filter((r) => r[keyCol] !== row[keyCol]);
+      }
       tables[table].push(row);
       return { results: [], success: true };
     }

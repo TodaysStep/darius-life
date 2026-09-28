@@ -266,3 +266,78 @@ CREATE TABLE IF NOT EXISTS ingest_items (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_ingest_status ON ingest_items(status);
+
+-- Prep sessions: rehearsal for an upcoming hearing OR a design
+-- presentation/meeting — one shared area, two event kinds (Darius is a
+-- self-represented litigant AND a presentation designer; the system tells
+-- the two apart explicitly, never by guessing from wording). kind =
+-- 'hearing' | 'presentation'. A hearing-kind session may link to a case
+-- (case_id), which is how its pressure-test can draw on that case's own
+-- flagged patterns (see patterns table); a presentation-kind session
+-- never has a case_id — it stands alone, described entirely by context.
+-- pressure_test is bench-prep.js's own output: a list of anticipated hard
+-- questions/challenges to rehearse answering, grounded only in what's on
+-- record (flagged patterns/prior contradictions for a hearing, or the
+-- audience/stakes Darius describes in context for a presentation) — never
+-- advice on what to say, never a prediction of the outcome. Regenerated
+-- only on Darius's own "Generate pressure test" action (synchronous, not
+-- background), so pressure_test_updated_at always reflects a deliberate
+-- request, never a silent auto-refresh.
+CREATE TABLE IF NOT EXISTS prep_sessions (
+  id                       TEXT PRIMARY KEY,
+  kind                     TEXT NOT NULL,        -- hearing | presentation
+  title                    TEXT NOT NULL,
+  case_id                  TEXT REFERENCES cases(id),  -- hearing-kind only; null for presentation-kind
+  event_date               TEXT,
+  context                  TEXT,                 -- Darius's own description: what this is, who's involved,
+                                                   -- what's at stake — the only input a presentation-kind
+                                                   -- pressure-test has to work from
+  pressure_test            TEXT,
+  pressure_test_updated_at TEXT,
+  created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prep_sessions_kind ON prep_sessions(kind, event_date);
+CREATE INDEX IF NOT EXISTS idx_prep_sessions_case ON prep_sessions(case_id);
+
+-- A curated, closed set of verses, built up front rather than left to the
+-- model — see daily_verses below for how it's used. This table is the
+-- entire anti-hallucination boundary for scripture in this app:
+-- bench-verse.js is only ever handed rows from THIS table, it returns an
+-- id (never its own transcription of a verse), and that id is always
+-- re-checked against this table before anything is shown — the AI never
+-- gets the chance to misquote or invent a citation because it never
+-- produces the text at all, only a choice among rows already in it.
+--
+-- Seeded with 14 starting verses (World English Bible — public domain,
+-- modern English), fetched directly from ebible.org's own WEB text rather
+-- than assumed, same "checked directly, not assumed" rule as the one
+-- seeded resources entry above. These are a starting point for Darius's
+-- own review, not a finished or authoritative set — exactly the
+-- distinction the Scripture library page states to him directly; he's
+-- free to delete any of them and add his own.
+CREATE TABLE IF NOT EXISTS scripture_verses (
+  id          TEXT PRIMARY KEY,
+  reference   TEXT NOT NULL,       -- e.g. "Philippians 4:6-7"
+  translation TEXT NOT NULL,       -- e.g. "WEB" — stated explicitly, never left implicit
+  text        TEXT NOT NULL,       -- exact wording Darius approved; always read from here, never from AI output
+  tags        TEXT NOT NULL DEFAULT '',  -- free-text, comma-separated (e.g. "anxiety,courage,waiting") —
+                                          -- Darius's own words for what a verse speaks to, used to help
+                                          -- bench-verse.js match it to a day's agenda; never AI-assigned
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- One row per calendar date already picked — a cache, not a log: the
+-- daily verse is lazy-computed synchronously on the first home-page load
+-- of a new day (see bench-working.js), then reused for the rest of that
+-- day rather than recomputed on every visit. verse_id is always one of
+-- scripture_verses.id (bench-verse.js validates this itself before
+-- writing the row); rationale is the AI's own stated reason for the
+-- match, shown alongside the verse so Darius can see why it was picked,
+-- never as a substitute for the verse's own text.
+CREATE TABLE IF NOT EXISTS daily_verses (
+  date       TEXT PRIMARY KEY,     -- YYYY-MM-DD
+  verse_id   TEXT NOT NULL REFERENCES scripture_verses(id),
+  rationale  TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);

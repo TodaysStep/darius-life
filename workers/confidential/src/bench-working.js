@@ -40,6 +40,8 @@ import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
 import { summarizeCase } from "../../shared/bench-case-summary.js";
+import { generatePressureTest } from "../../shared/bench-prep.js";
+import { buildTodayAgenda, selectVerses } from "../../shared/bench-verse.js";
 import { MAX_TRANSCRIBABLE_BYTES, transcribeAudio } from "../../shared/bench-transcribe.js";
 import { BENCH_CLIENT_JS } from "./bench-client-script.js";
 
@@ -101,6 +103,16 @@ const listRecordingAffectedDocuments = (env, recordingId) => data.listRecordingA
 const listDocumentAffectingRecordings = (env, documentId) => data.listDocumentAffectingRecordings(env.BENCH_NOTES, documentId);
 const searchAll = (env, filters) => data.searchAll(env.BENCH_NOTES, filters);
 const deleteEntry = (env, id) => data.deleteEntry(env.BENCH_NOTES, id);
+const listPrepSessions = (env) => data.listPrepSessions(env.BENCH_NOTES);
+const getPrepSession = (env, id) => data.getPrepSession(env.BENCH_NOTES, id);
+const addPrepSession = (env, fields) => data.addPrepSession(env.BENCH_NOTES, fields);
+const updatePrepSessionPressureTest = (env, id, pressureTest) => data.updatePrepSessionPressureTest(env.BENCH_NOTES, id, pressureTest);
+const deletePrepSession = (env, id) => data.deletePrepSession(env.BENCH_NOTES, id);
+const listScriptureVerses = (env) => data.listScriptureVerses(env.BENCH_NOTES);
+const addScriptureVerse = (env, fields) => data.addScriptureVerse(env.BENCH_NOTES, fields);
+const deleteScriptureVerse = (env, id) => data.deleteScriptureVerse(env.BENCH_NOTES, id);
+const getDailyVerse = (env, date) => data.getDailyVerse(env.BENCH_NOTES, date);
+const setDailyVerse = (env, fields) => data.setDailyVerse(env.BENCH_NOTES, fields);
 
 // Every R2 delete below is best-effort: if a key is already gone (or the
 // bucket call fails), the D1 rows still go — an orphaned R2 object costs
@@ -152,6 +164,33 @@ function regenerateCaseSummaryInBackground(env, ctx, caseId) {
   const task = regenerateCaseSummary(env, caseId).catch(() => {});
   if (ctx?.waitUntil) ctx.waitUntil(task);
   return task;
+}
+
+// The home page's verse-of-the-day, lazy-computed synchronously the first
+// time it's needed each day (unlike regenerateCaseSummary above, this is
+// deliberately awaited, not backgrounded — the home page has nothing
+// meaningful to show below the header until a pick exists for today, so
+// there's no earlier response to avoid blocking). Every later load that
+// same day just reads back what getDailyVerse already has, no new AI
+// call. force=true (the manual "Pick again for today" action) always
+// recomputes even if today's pick already exists — see setDailyVerse's
+// own INSERT OR REPLACE for why that's safe to call twice.
+async function getOrComputeDailyVerse(env, { force = false } = {}) {
+  const today = todayStr();
+  if (!force) {
+    const existing = await getDailyVerse(env, today);
+    if (existing) return existing;
+  }
+  const verses = await listScriptureVerses(env);
+  if (!verses.length) return null; // nothing curated yet — plainly nothing to show, never a fabricated pick
+
+  const [upcomingEntries, prepSessions] = await Promise.all([listUpcomingEntries(env), listPrepSessions(env)]);
+  const agenda = buildTodayAgenda(upcomingEntries, prepSessions, today);
+  const { picks } = await selectVerses(env, verses, agenda, { count: 1 });
+  if (!picks.length) return null; // the model didn't return a valid pick — no verse shown today, never a guess
+
+  await setDailyVerse(env, { date: today, verseId: picks[0].verseId, rationale: picks[0].reason });
+  return getDailyVerse(env, today);
 }
 
 // Reads a recording's own audio from R2 and asks bench-transcribe.js to
@@ -228,7 +267,28 @@ function blobUploadFields() {
 <p data-upload-status class="hint" style="display:none"></p>`;
 }
 
-function renderCaseList(cases, grants, grantSummaries, upcomingByCase) {
+// Shown just below the header, home page only. dailyVerse is
+// getOrComputeDailyVerse's own return — null means either nothing is
+// curated yet (verses.length === 0) or the model didn't return a usable
+// pick today; either way, this says that plainly rather than showing
+// anything invented. verse.text/reference/translation always come from
+// getDailyVerse's own join against scripture_verses — never from
+// dailyVerse.rationale, which is only ever the model's stated reason, put
+// next to the verse for context, never the verse itself.
+function renderDailyVerseCard(dailyVerse) {
+  if (!dailyVerse) {
+    return `<div class="card"><p class="hint">No verse of the day yet — <a href="${PREFIX}scripture">add a few to your curated set</a> to start seeing one here.</p></div>`;
+  }
+  const { verse, rationale } = dailyVerse;
+  return `<div class="card">
+<strong>${escapeHtml(verse.reference)}</strong> <span class="hint">(${escapeHtml(verse.translation)})</span>
+<div class="entry-layer">${escapeHtml(verse.text)}</div>
+${rationale ? `<p class="hint">${escapeHtml(rationale)}</p>` : ""}
+<form style="display:inline" method="post" action="${PREFIX}scripture/daily/refresh"><button type="submit">Pick again for today</button></form>
+</div>`;
+}
+
+function renderCaseList(cases, grants, grantSummaries, upcomingByCase, dailyVerse) {
   const rows = cases.length
     ? cases.map((c) => {
         const upcoming = upcomingByCase?.get(c.id);
@@ -242,8 +302,9 @@ function renderCaseList(cases, grants, grantSummaries, upcomingByCase) {
   return benchPage(
     "Bench Notes",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Working docket — private</span></h1></header>
+${renderDailyVerseCard(dailyVerse)}
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
-<p class="note"><a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
+<p class="note"><a href="${PREFIX}prep">Hearing &amp; presentation prep &rarr;</a> · <a href="${PREFIX}scripture">Scripture &rarr;</a> · <a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
 
 <h2>Upload a document</h2>
 <p class="hint">The default way to start a bench note. Bench Notes reads the document itself to say what it is and find its case number — matching an existing case by that number, or starting a new one. Nothing to type except your own notes, and even those are optional. Large files upload directly with a progress bar, so a big scan won't hang or crash the page.</p>
@@ -740,6 +801,134 @@ ${rows}`,
   );
 }
 
+// Rehearsal for an upcoming hearing OR a design presentation/meeting — one
+// shared area, two event kinds, told apart explicitly by session.kind
+// (never guessed from wording). A hearing-kind session may link to one of
+// Darius's own cases (so its pressure test can draw on that case's own
+// flagged patterns); a presentation-kind session never has one. See the
+// schema's own comment on prep_sessions for the full reasoning.
+function renderPrepList(sessions, cases) {
+  const caseTitleById = new Map(cases.map((c) => [c.id, c.title]));
+  const rows = sessions.length
+    ? sessions.map((s) => {
+        const caseTag = s.case_id ? ` · ${escapeHtml(caseTitleById.get(s.case_id) || s.case_id)}` : "";
+        return `<div class="case-row"><a href="${PREFIX}prep/${escapeHtml(s.id)}">${escapeHtml(s.title)}</a><span class="status">${escapeHtml(s.kind)}${s.event_date ? ` · ${escapeHtml(s.event_date)}` : ""}${caseTag}</span></div>`;
+      }).join("\n")
+    : `<p class="hint">Nothing to prepare for yet.</p>`;
+  const caseOptions = cases.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)}</option>`).join("\n");
+
+  return benchPage(
+    "Prep",
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>Prep<span class="tag">Hearings &amp; presentations</span></h1></header>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a></p>
+<p class="hint">Rehearsal for a hearing or for a design presentation/meeting — the same area either way, since it's the same kind of pressure either way. A "Generate pressure test" gives you specific, concrete questions or challenges to rehearse answering, grounded only in what's on record (a flagged pattern for a hearing, or what you describe below for a presentation) — never advice on what to say, never a prediction.</p>
+${rows}
+<h3>Add a prep session</h3>
+<form method="post" action="${PREFIX}prep">
+<label for="prepKind">Kind</label>
+<select id="prepKind" name="kind">
+<option value="hearing">Hearing</option>
+<option value="presentation">Presentation / meeting</option>
+</select>
+<label for="prepTitle">Title</label>
+<input type="text" id="prepTitle" name="title" required>
+<label for="prepCase">Case (hearing prep only — leave blank for a presentation)</label>
+<select id="prepCase" name="caseId">
+<option value="">(none)</option>
+${caseOptions}
+</select>
+<label for="prepDate">Date (optional)</label>
+<input type="date" id="prepDate" name="eventDate">
+<label for="prepContext">Context — who's involved, what's at stake, what's been raised before</label>
+<textarea id="prepContext" name="context"></textarea>
+<button type="submit">Add</button>
+</form>`,
+  );
+}
+
+function renderPrepDetail(session, { caseRow = null, patterns = [], entries = [] } = {}) {
+  const base = `${PREFIX}prep/${escapeHtml(session.id)}`;
+  const caseLine = caseRow ? `<p class="hint">Case: <a href="${PREFIX}case/${escapeHtml(caseRow.id)}">${escapeHtml(caseRow.title)}</a></p>` : "";
+  const patternRows = patterns.length
+    ? patterns.map((p) => `<div class="card"><strong>${escapeHtml(p.subject_name)}</strong> <span class="hint">(${escapeHtml(p.subject_type)})</span><div>${escapeHtml(p.description)}</div></div>`).join("\n")
+    : "";
+  const entryRows = entries.length
+    ? entries.map((e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${escapeHtml(e.entry_kind)}</span><div class="entry-layer">${escapeHtml(e.fact)}</div></div>`).join("\n")
+    : "";
+  const pressureTestBlock = session.pressure_test
+    ? `<div class="card"><h3>Pressure test</h3><div class="entry-layer">${escapeHtml(session.pressure_test).replace(/\n/g, "<br>")}</div><p class="hint">Generated ${escapeHtml(session.pressure_test_updated_at || "")}</p></div>`
+    : `<p class="hint">No pressure test generated yet.</p>`;
+
+  return benchPage(
+    session.title,
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(session.title)}<span class="tag">${escapeHtml(session.kind)}${session.event_date ? ` · ${escapeHtml(session.event_date)}` : ""}</span></h1></header>
+<p class="note"><a href="${PREFIX}prep">&larr; All prep sessions</a></p>
+${caseLine}
+${session.context ? `<div class="card"><h3>Context</h3><div class="entry-layer">${escapeHtml(session.context)}</div></div>` : ""}
+${session.kind === "hearing" ? `<h3>Patterns on record for this case</h3>${patternRows || `<p class="hint">None flagged yet.</p>`}<h3>Upcoming hearings/deadlines on record for this case</h3>${entryRows || `<p class="hint">None on record.</p>`}` : ""}
+${pressureTestBlock}
+<form method="post" action="${base}/pressure-test"><button type="submit">${session.pressure_test ? "Regenerate" : "Generate"} pressure test</button></form>
+<p class="note"><a href="${PREFIX}prep">All prep sessions</a></p>
+<form method="post" action="${base}/delete" onsubmit="return confirm('Delete this prep session?')"><button type="submit">Delete</button></form>`,
+  );
+}
+
+// The curated verse set — Darius's own, built up front rather than left
+// to the model. See the schema's own comment on scripture_verses for why
+// this table is the entire anti-hallucination boundary for scripture: the
+// model only ever picks among these rows (bench-verse.js), it never
+// writes verse text itself, and its picked id is always checked against
+// this exact list before anything is shown.
+function renderScriptureLibrary(verses) {
+  const rows = verses.length
+    ? verses.map((v) => `<div class="card"><strong>${escapeHtml(v.reference)}</strong> <span class="hint">(${escapeHtml(v.translation)})</span><div class="entry-layer">${escapeHtml(v.text)}</div>${v.tags ? `<p class="hint">Tags: ${escapeHtml(v.tags)}</p>` : ""}<form method="post" action="${PREFIX}scripture/${escapeHtml(v.id)}/delete"><button type="submit">Delete</button></form></div>`).join("\n")
+    : `<p class="hint">Nothing curated yet — add a verse below to start seeing a verse of the day on the home page.</p>`;
+  return benchPage(
+    "Scripture",
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>Scripture<span class="tag">Your curated set</span></h1></header>
+<p class="note"><a href="${PREFIX}">&larr; All cases</a> · <a href="${PREFIX}scripture/research">Research &rarr;</a></p>
+<p class="hint">Only verses in this list ever show up as the verse of the day or in research below. The model only ever picks among these by id; it's never asked to write out scripture itself, so nothing here can be misquoted or invented. Seeded with 14 starting verses (World English Bible — public domain, modern English), sourced directly from ebible.org rather than assumed — a starting point for your own review, not a finished or authoritative set. Delete any you don't want, and add your own.</p>
+${rows}
+<h3>Add a verse</h3>
+<form method="post" action="${PREFIX}scripture">
+<label for="verseReference">Reference</label>
+<input type="text" id="verseReference" name="reference" placeholder="e.g. Philippians 4:6-7" required>
+<label for="verseTranslation">Translation</label>
+<input type="text" id="verseTranslation" name="translation" placeholder="e.g. WEB" required>
+<label for="verseText">Text — exactly as you want it shown</label>
+<textarea id="verseText" name="text" required></textarea>
+<label for="verseTags">Tags (optional, comma-separated — e.g. anxiety, courage, waiting)</label>
+<input type="text" id="verseTags" name="tags">
+<button type="submit">Add</button>
+</form>`,
+  );
+}
+
+// Deeper research than a single daily pick: a free-text description of
+// what's actually pressing right now (not just a word/passage to search
+// for), matched against the same curated set and the same
+// never-invented-text boundary as the daily verse. Up to several matches,
+// each with the model's own stated reason, next to the verse's own real
+// text — never a substitute for it.
+function renderScriptureResearch(query, matches, error) {
+  const rows = matches?.length
+    ? matches.map((m) => `<div class="card"><strong>${escapeHtml(m.verse.reference)}</strong> <span class="hint">(${escapeHtml(m.verse.translation)})</span><div class="entry-layer">${escapeHtml(m.verse.text)}</div>${m.reason ? `<p class="hint">${escapeHtml(m.reason)}</p>` : ""}</div>`).join("\n")
+    : "";
+  return benchPage(
+    "Scripture research",
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>Scripture research<span class="tag">Beyond a word or a passage</span></h1></header>
+<p class="note"><a href="${PREFIX}scripture">&larr; Your curated set</a></p>
+<p class="hint">Describe what's actually pressing right now — a hearing, a presentation, a specific worry — rather than just a word to search for. Matches only ever come from your curated set above, by id; the model never writes scripture text itself.</p>
+<form method="get" action="${PREFIX}scripture/research">
+<label for="researchQ">What's on your mind</label>
+<textarea id="researchQ" name="q">${escapeHtml(query || "")}</textarea>
+<button type="submit">Search</button>
+</form>
+${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+${query ? (rows || `<p class="hint">Nothing matched.</p>`) : ""}`,
+  );
+}
+
 // Not case-scoped, not AI-generated, not maintained by anyone but Darius —
 // see schema/bench-notes.sql's own comment on the resources table for why
 // exactly one entry is seeded rather than assumed.
@@ -852,7 +1041,44 @@ export async function handleBenchGet(request, env, url) {
         if (e.entry_date < today) continue;
         if (!upcomingByCase.has(e.case_id)) upcomingByCase.set(e.case_id, e);
       }
-      return html(renderCaseList(cases, grants, grantSummaries, upcomingByCase));
+      const dailyVerse = await getOrComputeDailyVerse(env);
+      return html(renderCaseList(cases, grants, grantSummaries, upcomingByCase, dailyVerse));
+    }
+
+    if (path === "prep") {
+      const [sessions, cases] = await Promise.all([listPrepSessions(env), listCases(env)]);
+      return html(renderPrepList(sessions, cases));
+    }
+
+    const prepDetailMatch = path.match(/^prep\/([^/]+)$/);
+    if (prepDetailMatch) {
+      const session = await getPrepSession(env, prepDetailMatch[1]);
+      if (!session) return notFound();
+      let record = {};
+      if (session.kind === "hearing" && session.case_id) {
+        const [caseRow, patterns, entries] = await Promise.all([
+          getCase(env, session.case_id),
+          listPatterns(env, session.case_id),
+          listEntries(env, session.case_id),
+        ]);
+        record = { caseRow, patterns, entries: entries.filter((e) => e.entry_kind === "hearing" || e.entry_kind === "deadline") };
+      }
+      return html(renderPrepDetail(session, record));
+    }
+
+    if (path === "scripture") {
+      return html(renderScriptureLibrary(await listScriptureVerses(env)));
+    }
+
+    if (path === "scripture/research") {
+      const query = url.searchParams.get("q") || "";
+      if (!query) return html(renderScriptureResearch("", null, null));
+      const verses = await listScriptureVerses(env);
+      if (!verses.length) return html(renderScriptureResearch(query, [], "Nothing curated yet — add a verse first."));
+      const { picks, error } = await selectVerses(env, verses, query, { count: 5 });
+      const verseById = new Map(verses.map((v) => [v.id, v]));
+      const matches = picks.map((p) => ({ verse: verseById.get(p.verseId), reason: p.reason }));
+      return html(renderScriptureResearch(query, matches, error));
     }
 
     if (path === "resources") {
@@ -1394,6 +1620,67 @@ export async function handleBenchPost(request, env, url, ctx) {
       const newPassphrase = form.get("newPassphrase");
       if (!newPassphrase || newPassphrase.length < 6) return html(errorPage("Passphrase must be at least 6 characters."), 400);
       await updateGrantPassphrase(env, passphraseMatch[1], await sha256Hex(newPassphrase));
+      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+    }
+
+    if (path === "prep") {
+      const kind = form.get("kind");
+      const title = form.get("title");
+      if (kind !== "hearing" && kind !== "presentation") return html(errorPage("A prep session needs a valid kind."), 400);
+      if (!title) return html(errorPage("A prep session needs a title."), 400);
+      const caseId = kind === "hearing" ? (form.get("caseId") || null) : null;
+      const id = crypto.randomUUID();
+      await addPrepSession(env, { id, kind, title, caseId, eventDate: form.get("eventDate"), context: form.get("context") });
+      return Response.redirect(`https://darius.life${PREFIX}prep/${id}`, 303);
+    }
+
+    // A deliberate action Darius is waiting on, same "await, don't
+    // background" contract as the case summary's own /summary/refresh —
+    // pressure_test_updated_at should always mean he asked for this just now.
+    const pressureTestMatch = path.match(/^prep\/([^/]+)\/pressure-test$/);
+    if (pressureTestMatch) {
+      const session = await getPrepSession(env, pressureTestMatch[1]);
+      if (!session) return notFound();
+      let record = {};
+      if (session.kind === "hearing" && session.case_id) {
+        const [caseRow, patterns, entries] = await Promise.all([
+          getCase(env, session.case_id),
+          listPatterns(env, session.case_id),
+          listEntries(env, session.case_id),
+        ]);
+        record = { caseRow, patterns, entries: entries.filter((e) => e.entry_kind === "hearing" || e.entry_kind === "deadline") };
+      }
+      const { pressureTest } = await generatePressureTest(env, session, record);
+      if (pressureTest) await updatePrepSessionPressureTest(env, session.id, pressureTest);
+      return Response.redirect(`https://darius.life${PREFIX}prep/${session.id}`, 303);
+    }
+
+    const prepDeleteMatch = path.match(/^prep\/([^/]+)\/delete$/);
+    if (prepDeleteMatch) {
+      await deletePrepSession(env, prepDeleteMatch[1]);
+      return Response.redirect(`https://darius.life${PREFIX}prep`, 303);
+    }
+
+    if (path === "scripture") {
+      const reference = form.get("reference");
+      const translation = form.get("translation");
+      const text = form.get("text");
+      if (!reference || !translation || !text) return html(errorPage("A verse needs a reference, translation, and text."), 400);
+      await addScriptureVerse(env, { id: crypto.randomUUID(), reference, translation, text, tags: form.get("tags") });
+      return Response.redirect(`https://darius.life${PREFIX}scripture`, 303);
+    }
+
+    const scriptureDeleteMatch = path.match(/^scripture\/([^/]+)\/delete$/);
+    if (scriptureDeleteMatch) {
+      await deleteScriptureVerse(env, scriptureDeleteMatch[1]);
+      return Response.redirect(`https://darius.life${PREFIX}scripture`, 303);
+    }
+
+    // Darius's own "pick again for today" — always recomputes, even though
+    // getOrComputeDailyVerse's default (the home page's own lazy load)
+    // would otherwise just reuse what's already picked for today.
+    if (path === "scripture/daily/refresh") {
+      await getOrComputeDailyVerse(env, { force: true });
       return Response.redirect(`https://darius.life${PREFIX}`, 303);
     }
 

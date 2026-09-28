@@ -1131,3 +1131,210 @@ test("the case list links to search", async () => {
   const res = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
   assert.match(await res.text(), /bench\/search/);
 });
+
+// --- Prep sessions (hearing + presentation) and Scripture ---
+
+test("the home page links to Prep and Scripture", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  const html = await res.text();
+  assert.match(html, /bench\/prep/);
+  assert.match(html, /bench\/scripture/);
+});
+
+test("the home page shows no verse of the day when nothing is curated yet, never a fabricated one", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  let calls = 0;
+  env.AI = { run: async () => { calls++; throw new Error("should never be called with an empty curated set"); } };
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  const html = await res.text();
+  assert.match(html, /No verse of the day yet/);
+  assert.equal(calls, 0);
+});
+
+test("the home page picks and persists today's verse on first load, then reuses it on the next load without calling the model again", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.scripture_verses.push({ id: "v1", reference: "Joshua 1:9", translation: "WEB", text: "Be strong and courageous...", tags: "courage", created_at: "t" });
+  let calls = 0;
+  env.AI = { run: async () => { calls++; return { response: '{"id": "v1", "reason": "Today calls for courage."}' }; } };
+
+  const first = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  const firstHtml = await first.text();
+  assert.match(firstHtml, /Joshua 1:9/);
+  assert.match(firstHtml, /Be strong and courageous/);
+  assert.match(firstHtml, /Today calls for courage\./);
+  assert.equal(calls, 1);
+  assert.equal(fakeD1.tables.daily_verses.length, 1);
+
+  const second = await handleBenchGet(authedRequest("https://darius.life/bench/", token), env, new URL("https://darius.life/bench/"));
+  assert.match(await second.text(), /Joshua 1:9/);
+  assert.equal(calls, 1); // reused today's pick — no second model call
+});
+
+test("POST /bench/scripture/daily/refresh forces a new pick even though today's is already cached", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.scripture_verses.push({ id: "v1", reference: "Joshua 1:9", translation: "WEB", text: "Be strong...", tags: "courage", created_at: "t" });
+  fakeD1.tables.scripture_verses.push({ id: "v2", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety", created_at: "t" });
+  fakeD1.tables.daily_verses.push({ date: "2026-09-28", verse_id: "v1", rationale: "First pick.", created_at: "t" });
+  env.AI = { run: async () => ({ response: '{"id": "v2", "reason": "Re-picked for anxiety."}' }) };
+
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/scripture/daily/refresh", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/scripture/daily/refresh"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.daily_verses.length, 1);
+  assert.equal(fakeD1.tables.daily_verses[0].verse_id, "v2");
+});
+
+test("GET /bench/prep lists hearing and presentation sessions with their kind and linked case", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.prep_sessions.push({ id: "p1", kind: "hearing", title: "TRO hearing prep", case_id: "case-1", event_date: "2026-10-15", context: null, pressure_test: null, pressure_test_updated_at: null, created_at: "t", updated_at: "t" });
+  fakeD1.tables.prep_sessions.push({ id: "p2", kind: "presentation", title: "Q4 brand deck", case_id: null, event_date: "2026-10-02", context: null, pressure_test: null, pressure_test_updated_at: null, created_at: "t", updated_at: "t" });
+
+  const res = await handleBenchGet(authedRequest("https://darius.life/bench/prep", token), env, new URL("https://darius.life/bench/prep"));
+  const html = await res.text();
+  assert.match(html, /TRO hearing prep/);
+  assert.match(html, /Family matter/);
+  assert.match(html, /Q4 brand deck/);
+});
+
+test("POST /bench/prep creates a hearing session linked to a case", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ kind: "hearing", title: "TRO hearing prep", caseId: "case-1", eventDate: "2026-10-15", context: "Judge X has raised timeline before." });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/prep", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/prep"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.prep_sessions.length, 1);
+  assert.equal(fakeD1.tables.prep_sessions[0].kind, "hearing");
+  assert.equal(fakeD1.tables.prep_sessions[0].case_id, "case-1");
+});
+
+test("POST /bench/prep for a presentation session ignores any caseId sent — it never links to a case", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+
+  const form = new URLSearchParams({ kind: "presentation", title: "Q4 brand deck", caseId: "case-1", context: "Stakeholders rejected the last deck's typography." });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/prep", token, { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/prep"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.prep_sessions[0].case_id, null);
+});
+
+test("POST /bench/prep/:id/pressure-test generates and stores it synchronously, drawing on the linked case's own flagged patterns", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.cases.push({ id: "case-1", title: "Family matter", court: null, case_number: "CV-1", status: "open", created_at: "t", updated_at: "t" });
+  fakeD1.tables.patterns.push({ id: "pat-1", case_id: "case-1", subject_type: "judge", subject_name: "Judge X", description: "Repeatedly raises timeline objections.", entries_json: "[]", created_at: "t", updated_at: "t" });
+  fakeD1.tables.prep_sessions.push({ id: "p1", kind: "hearing", title: "TRO hearing prep", case_id: "case-1", event_date: "2026-10-15", context: null, pressure_test: null, pressure_test_updated_at: null, created_at: "t", updated_at: "t" });
+  let sentPrompt = "";
+  env.AI = { run: async (model, opts) => { sentPrompt = opts.messages[0].content; return { response: "1. What if Judge X raises the timeline objection again?" }; } };
+
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/prep/p1/pressure-test", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/prep/p1/pressure-test"),
+  );
+  assert.equal(res.status, 303);
+  // No ctx.waitUntil was passed at all, yet the pressure test is already
+  // there — same "await, don't background" contract as /summary/refresh.
+  assert.match(sentPrompt, /Repeatedly raises timeline objections\./);
+  assert.match(fakeD1.tables.prep_sessions[0].pressure_test, /timeline objection/);
+  assert.ok(fakeD1.tables.prep_sessions[0].pressure_test_updated_at);
+
+  const detail = await handleBenchGet(authedRequest("https://darius.life/bench/prep/p1", token), env, new URL("https://darius.life/bench/prep/p1"));
+  assert.match(await detail.text(), /timeline objection/);
+});
+
+test("POST /bench/prep/:id/delete removes the session", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.prep_sessions.push({ id: "p1", kind: "presentation", title: "Deck", case_id: null, event_date: null, context: null, pressure_test: null, pressure_test_updated_at: null, created_at: "t", updated_at: "t" });
+  const res = await handleBenchPost(
+    authedRequest("https://darius.life/bench/prep/p1/delete", token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/prep/p1/delete"),
+  );
+  assert.equal(res.status, 303);
+  assert.equal(fakeD1.tables.prep_sessions.length, 0);
+});
+
+test("GET /bench/scripture lists the curated set; POST adds and deletes a verse", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+
+  const addForm = new URLSearchParams({ reference: "Joshua 1:9", translation: "WEB", text: "Be strong and courageous...", tags: "courage" });
+  const addRes = await handleBenchPost(
+    authedRequest("https://darius.life/bench/scripture", token, { method: "POST", body: addForm.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://darius.life/bench/scripture"),
+  );
+  assert.equal(addRes.status, 303);
+  assert.equal(fakeD1.tables.scripture_verses.length, 1);
+  const verseId = fakeD1.tables.scripture_verses[0].id;
+
+  const listRes = await handleBenchGet(authedRequest("https://darius.life/bench/scripture", token), env, new URL("https://darius.life/bench/scripture"));
+  assert.match(await listRes.text(), /Joshua 1:9/);
+
+  const delRes = await handleBenchPost(
+    authedRequest(`https://darius.life/bench/scripture/${verseId}/delete`, token, { method: "POST", body: "", headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL(`https://darius.life/bench/scripture/${verseId}/delete`),
+  );
+  assert.equal(delRes.status, 303);
+  assert.equal(fakeD1.tables.scripture_verses.length, 0);
+});
+
+test("GET /bench/scripture/research?q= matches the curated set only, showing the model's stated reason next to the verse's own real text", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.scripture_verses.push({ id: "v1", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety", created_at: "t" });
+  env.AI = { run: async () => ({ response: '{"picks": [{"id": "v1", "reason": "Fits a time-sensitive worry about a hearing."}]}' }) };
+
+  const res = await handleBenchGet(
+    authedRequest("https://darius.life/bench/scripture/research?q=I'm+anxious+about+a+hearing+tomorrow", token),
+    env, new URL("https://darius.life/bench/scripture/research?q=I'm+anxious+about+a+hearing+tomorrow"),
+  );
+  const html = await res.text();
+  assert.match(html, /Philippians 4:6-7/);
+  assert.match(html, /In nothing be anxious/);
+  assert.match(html, /Fits a time-sensitive worry about a hearing\./);
+});
+
+test("scripture research never trusts an id the model invents outside the curated set", async () => {
+  const { token, jwk } = await validToken();
+  const { env, fakeD1 } = setup(jwk);
+  fakeD1.tables.scripture_verses.push({ id: "v1", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety", created_at: "t" });
+  env.AI = { run: async () => ({ response: '{"picks": [{"id": "made-up-id", "reason": "Sounds relevant."}]}' }) };
+
+  const res = await handleBenchGet(
+    authedRequest("https://darius.life/bench/scripture/research?q=anything", token),
+    env, new URL("https://darius.life/bench/scripture/research?q=anything"),
+  );
+  const html = await res.text();
+  assert.doesNotMatch(html, /Philippians/);
+  assert.match(html, /curated list/);
+});
+
+test("scripture research with nothing curated yet says so plainly, without calling the model", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  let calls = 0;
+  env.AI = { run: async () => { calls++; throw new Error("should never be called"); } };
+  const res = await handleBenchGet(
+    authedRequest("https://darius.life/bench/scripture/research?q=anything", token),
+    env, new URL("https://darius.life/bench/scripture/research?q=anything"),
+  );
+  assert.match(await res.text(), /Nothing curated yet/);
+  assert.equal(calls, 0);
+});

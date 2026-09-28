@@ -310,16 +310,61 @@ Darius's own docket:
   millions) that this costs nothing real, and it needed no new SQL
   capability from D1 or from the test suite's own deliberately minimal
   fake-D1 harness.
+- **Prep** (`/bench/prep`) — rehearsal for an upcoming hearing OR a design
+  presentation/meeting, one shared area with two event kinds
+  (`prep_sessions.kind`), told apart explicitly, never guessed from
+  wording: Darius is both a self-represented litigant and a presentation
+  designer, and this is where both kinds of pressure get prepared for. A
+  hearing-kind session may link to one of his own cases; a
+  presentation-kind session never does — it stands alone, described
+  entirely by the context he writes. **"Generate pressure test"**
+  (`workers/shared/bench-prep.js`) hands back 4-8 specific, concrete
+  questions or challenges to rehearse answering — never advice on what to
+  say or do, never a prediction of the outcome, refused directly in the
+  prompt itself the same way the case summary's own boundary is. For a
+  hearing, it's grounded in that case's own flagged patterns and
+  hearing/deadline entries (the same `patterns` table already used
+  elsewhere); for a presentation, it's grounded only in what Darius
+  describes about the audience and stakes. Generated synchronously, only
+  on that explicit button press — never in the background, and never
+  automatically — same "await, don't background" contract as the case
+  summary's own "Refresh summary now."
+- **Scripture** (`/bench/scripture`) — a verse of the day on the home
+  page, just below the header, based on a summary of what's actually
+  coming up (hearings/deadlines and prep sessions in the next 7 days —
+  `bench-verse.js`'s `buildTodayAgenda`), plus deeper research
+  (`/bench/scripture/research`) against a free-text description of
+  what's actually pressing, not just a word or passage to search for.
+  The entire anti-hallucination boundary here is structural, not a
+  prompt instruction: the model is only ever handed a curated, closed
+  list of verses (`scripture_verses` — id, reference, translation, text,
+  tags) and asked to return an id and a one-sentence reason, never asked
+  to write out scripture itself; the returned id is always checked against
+  that exact list before anything is shown, and the verse's own text is
+  always read back from the database by that validated id — never from
+  anything the model said directly. An id outside the list, or no valid
+  id at all, means no verse shown that day, never a guess. Seeded with 14
+  starting verses (World English Bible — public domain, modern English),
+  fetched directly from ebible.org's own WEB text rather than assumed,
+  same "checked directly, not assumed" rule as the one seeded resources
+  entry above — a starting point for Darius's own review, not a finished
+  or authoritative set; he's free to delete any of them and add his own.
+  Today's pick is lazy-computed once per calendar date (the first home
+  page load of the day awaits it directly — the page has nothing
+  meaningful to show below the header without it — then every later load
+  that day just reads back what's cached) and a **"Pick again for
+  today"** button forces a fresh pick on demand.
 - **Runs entirely on the Workers Free plan — no Workers Paid plan
   required, anywhere in Bench Notes.** Checked directly against
   Cloudflare's own current published limits, not assumed: neither Worker's
   `wrangler.toml` declares Durable Objects, Queues, or a `[limits] cpu_ms`
   override (the last of which only takes effect on Paid anyway — Free is a
-  hard, non-configurable 10&nbsp;ms CPU-time cap per request). All four AI
+  hard, non-configurable 10&nbsp;ms CPU-time cap per request). All six AI
   operations here — document classification, PDF-to-text (`toMarkdown`),
-  case summarization, and voice-note transcription (`whisper`) — run
+  case summarization, voice-note transcription (`whisper`), hearing/
+  presentation pressure-testing, and scripture verse selection — run
   through the same `env.AI` binding and draw from the same 10,000-Neuron
-  free daily account allocation; none of the four models/utilities used is
+  free daily account allocation; none of the models/utilities used is
   on Cloudflare's Paid-plan-only model list. Every one of those calls is
   already wrapped in its own try/catch that degrades gracefully on
   failure (a null summary, an "upload-ai-failed" tag, a skipped
