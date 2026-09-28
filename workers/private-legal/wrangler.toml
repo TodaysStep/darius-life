@@ -58,10 +58,13 @@ ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
 ACCESS_AUD = "REPLACE-ME"
 GITHUB_REPO = "TodaysStep/darius-life"
 GITHUB_BRANCH = "main"
-# ENTRUSTED_COOKIE_SECRET is a secret, not a var — set with
-# `wrangler secret put ENTRUSTED_COOKIE_SECRET` or via deploy.yml's wrangler-action
-# `secrets` input, same as GH_COMMIT_TOKEN below. Used to HMAC-sign the entrusted
-# side's session cookie; rotating it instantly invalidates every open session.
+# ENTRUSTED_COOKIE_SECRET is a secret, not a var. HMAC-signs the Bench Notes
+# entrusted side's session cookie; rotating it instantly invalidates every
+# open session. Not yet set anywhere — add it as a GH repo secret (Settings →
+# Secrets and variables → Actions, any random 32+ byte value) and deploy.yml's
+# separate "Upload the Bench Notes entrusted-side cookie secret" step picks it
+# up automatically on the next push. Until then it's simply unset, and
+# bench-entrusted.js's session signing/verification will fail closed.
 # GH_COMMIT_TOKEN is a secret, not a var — set with
 # `wrangler secret put GH_COMMIT_TOKEN` or via deploy.yml's wrangler-action
 # `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).
