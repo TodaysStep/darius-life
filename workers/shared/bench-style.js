@@ -29,6 +29,10 @@ export const STENOTYPE_ICON = (size = 96) =>
 
 const STYLE = `
 :root { color-scheme: light; }
+html {
+  background: #E9E0CC;
+  color: #2A2318;
+}
 body {
   margin: 0;
   background: #E9E0CC;
@@ -47,12 +51,12 @@ header.bench-header {
 }
 .steno-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
 h1 { font-size: 1.25em; margin: 0; letter-spacing: 0.01em; }
-h1 .tag { display: block; font-size: 0.55em; font-weight: normal; letter-spacing: 0.15em; text-transform: uppercase; opacity: 0.65; margin-top: 0.3em; }
+h1 .tag { display: block; font-size: 0.55em; font-weight: normal; letter-spacing: 0.15em; text-transform: uppercase; color: #2A2318; opacity: 0.65; margin-top: 0.3em; }
 h2 {
   font-size: 0.95em; margin: 1.8em 0 0.7em; padding-bottom: 0.4em;
   border-bottom: 2px dotted #2A231855; letter-spacing: 0.04em; text-transform: uppercase;
 }
-h3 { font-size: 0.8em; margin: 1.1em 0 0.5em; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.75; }
+h3 { font-size: 0.8em; margin: 1.1em 0 0.5em; letter-spacing: 0.05em; text-transform: uppercase; color: #2A2318; opacity: 0.75; }
 .spine { border-left: 3px solid #2A231855; margin: 0 0 0 0.4em; padding-left: 1.1em; }
 .spine .card { position: relative; }
 .spine .card::before {
@@ -64,7 +68,7 @@ h3 { font-size: 0.8em; margin: 1.1em 0 0.5em; letter-spacing: 0.05em; text-trans
   margin-bottom: 1.2em; display: flex; justify-content: space-between; align-items: center; gap: 1em;
 }
 .preview-banner a { color: #F6EFE2; font-weight: bold; }
-p.hint { font-size: 0.88em; opacity: 0.75; margin: 0.6em 0 1.2em; }
+p.hint { font-size: 0.88em; color: #2A2318; opacity: 0.75; margin: 0.6em 0 1.2em; }
 .ticker { border-top: 1px dashed #2A231855; margin: 1.6em 0; }
 a { color: #5B3A29; }
 button, input[type="submit"] {
@@ -72,7 +76,7 @@ button, input[type="submit"] {
   border: none; border-radius: 0.3em; cursor: pointer;
 }
 button:active, input[type="submit"]:active { opacity: 0.85; }
-input[type="text"], input[type="date"], input[type="password"], textarea, select {
+input[type="text"], input[type="date"], input[type="password"], input[type="file"], textarea, select {
   font: inherit; width: 100%; box-sizing: border-box; padding: 0.6em 0.7em; margin: 0.3em 0 0.9em;
   border: 1px solid #2A231855; border-radius: 0.25em; background: #FBF8F0; color: #2A2318;
 }
@@ -83,13 +87,46 @@ textarea { min-height: 4em; resize: vertical; }
 .card { background: #FBF8F0; border: 1px solid #2A231833; border-radius: 0.4em; padding: 0.9em 1em; margin: 0.9em 0; }
 .entry-date { font-weight: bold; font-size: 0.85em; letter-spacing: 0.05em; }
 .entry-layer { margin: 0.5em 0; padding-left: 0.8em; border-left: 3px solid #2A231833; }
-.entry-layer .layer-name { display: block; font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6; margin-bottom: 0.15em; }
+.entry-layer .layer-name { display: block; font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.08em; color: #2A2318; opacity: 0.6; margin-bottom: 0.15em; }
 .case-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0.7em 0; border-bottom: 1px dashed #2A231855; }
 .case-row a { font-weight: bold; text-decoration: none; }
-.case-row .status { font-size: 0.78em; opacity: 0.7; }
+.case-row .status { font-size: 0.78em; color: #2A2318; opacity: 0.7; }
 .note { font-size: 0.88em; margin-top: 1.5em; }
 .error { color: #7A2E1E; font-weight: bold; }
 .upcoming { border-left: 4px solid #7A2E1E; }
+/* Every page declares :root { color-scheme: light } above, which should be
+ * enough on its own — but a phone or browser that darkens web content
+ * regardless (some Android WebViews' "force dark," some in-app browsers)
+ * has been seen to reach this page anyway, fading body text toward gray
+ * while leaving backgrounds closer to their authored color, which is the
+ * opposite of readable. This block does not add a dark theme: it restates
+ * the exact same parchment palette, at the same specificity a
+ * prefers-color-scheme: dark match would otherwise win at, so there is
+ * nothing left for a heuristic to darken. Every rule above that sets a
+ * color or background is repeated here unchanged.
+ */
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: light; }
+  html { background: #E9E0CC; color: #2A2318; }
+  body {
+    background: #E9E0CC;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(17,17,17,0.05) 0 1px, transparent 1px 6px);
+    color: #2A2318;
+  }
+  .steno-icon { background: #FFFFFF; }
+  h1 .tag, h3, p.hint, .entry-layer .layer-name, .case-row .status { color: #2A2318; }
+  .spine .card::before { background: #2A2318; border-color: #E9E0CC; }
+  .preview-banner { background: #7A2E1E; color: #F6EFE2; }
+  .preview-banner a { color: #F6EFE2; }
+  a { color: #5B3A29; }
+  button, input[type="submit"] { background: #2A2318; color: #E9E0CC; }
+  input[type="text"], input[type="date"], input[type="password"], input[type="file"], textarea, select {
+    background: #FBF8F0; color: #2A2318;
+  }
+  .card { background: #FBF8F0; }
+  .error { color: #7A2E1E; }
+}
 @media print {
   header.bench-header a, form, button, .ticker, p.note, .preview-banner, details summary { display: none !important; }
   body { background: #fff !important; }
