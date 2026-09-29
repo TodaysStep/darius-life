@@ -14,8 +14,8 @@
   "todays-step": "active",
   "founder-notes": "active",
   "dreamstep-education": "active",
-  "dreamstep-engineering": "active",
-  "lox": "active",
+  "dreamstep-engineering": "paused",
+  "lox": "paused",
   "posterity-cloud": "active",
   "founding-record": "active"
 }
