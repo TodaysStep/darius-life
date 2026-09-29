@@ -6,11 +6,9 @@
 #                        which commits data/status.json and data/projects.json
 #                        back to this repo's main branch via the GitHub API —
 #                        see docs/cloudflare-setup.md.
-#   - /bench-entrusted/* Bench Notes entrusted side (src/bench-entrusted.js) —
-#                        documents-only, single universal passphrase, NOT behind
-#                        Cloudflare Access (guests have no Access identity). See
-#                        that file's own header for why it's a structurally
-#                        separate module, not a filtered view of the working side.
+#   - /bench-entrusted/* only redirects (301, GET) to the entrusted section's new
+#                        home, https://confidential.darius.life/entrusted/, so
+#                        links already given to guests keep working.
 #   - /bench/api/*       Bench Notes' machine API (src/bench-api.js) — the
 #                        publishing desk's write surface (a server, not a
 #                        browser, so it can't complete an Access login; gated

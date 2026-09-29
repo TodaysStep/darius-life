@@ -334,7 +334,7 @@ ${rows}
 </form>
 
 <h2>Entrusted access — management</h2>
-<p class="hint">Everything currently live on the entrusted side (<a href="/bench-entrusted/">/bench-entrusted/</a>, a structurally separate area, not this login): who has a passphrase, what they can see, and what's actually been shared with them.</p>
+<p class="hint">Everything currently live on the entrusted side (<a href="/entrusted/">/entrusted/</a>, a structurally separate area, not this login): who has a passphrase, what they can see, and what's actually been shared with them.</p>
 ${grantRows}
 <h3>Add a guest</h3>
 <form method="post" action="${PREFIX}grants">
@@ -1267,7 +1267,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!title) return html(errorPage("A case needs a title."), 400);
       const id = crypto.randomUUID();
       await createCase(env, { id, title, court: form.get("court"), caseNumber: form.get("caseNumber") });
-      return Response.redirect(`https://darius.life${PREFIX}case/${id}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${id}`, 303);
     }
 
     if (path === "upload/finalize") {
@@ -1310,7 +1310,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       await addDocument(env, { id: docId, caseId, caseLabel: caseRow.title, entryId, title: filename, storageKind: "upload", storageRef: key });
 
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const entriesMatch = path.match(/^case\/([^/]+)\/entries$/);
@@ -1333,7 +1333,7 @@ export async function handleBenchPost(request, env, url, ctx) {
         entryKind: form.get("entryKind"),
       });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const entryShareMatch = path.match(/^case\/([^/]+)\/entries\/([^/]+)\/(share|unshare)$/);
@@ -1341,7 +1341,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const [, caseId, entryId, action] = entryShareMatch;
       if (!(await getCase(env, caseId))) return notFound();
       await setEntryShared(env, entryId, action === "share");
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     // Correcting an entry — most useful right after an upload, since an
@@ -1362,7 +1362,7 @@ export async function handleBenchPost(request, env, url, ctx) {
         entryKind: form.get("entryKind"),
       });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const entryDeleteMatch = path.match(/^case\/([^/]+)\/entries\/([^/]+)\/delete$/);
@@ -1371,7 +1371,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!(await getCase(env, caseId))) return notFound();
       await deleteEntry(env, entryId);
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const glossaryMatch = path.match(/^case\/([^/]+)\/glossary$/);
@@ -1383,7 +1383,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!term || !definition) return html(errorPage("A glossary entry needs a term and a definition."), 400);
       await addGlossaryTerm(env, { id: crypto.randomUUID(), caseId, term, definition });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const patternsMatch = path.match(/^case\/([^/]+)\/patterns$/);
@@ -1396,7 +1396,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!subjectName || !description) return html(errorPage("A pattern needs a name and a description."), 400);
       await addPattern(env, { id: crypto.randomUUID(), caseId, subjectType: subjectType || "other", subjectName, description });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const documentsMatch = path.match(/^case\/([^/]+)\/documents$/);
@@ -1410,7 +1410,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!data.isPublishableStorageRef(storageRef)) return html(errorPage("Where it lives must be an http(s) address."), 400);
       await addDocument(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, entryId: form.get("entryId"), title, storageRef, filedDate: form.get("filedDate") });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const shareMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/(share|unshare)$/);
@@ -1418,7 +1418,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const [, caseId, docId, action] = shareMatch;
       if (!(await getCase(env, caseId))) return notFound();
       await setDocumentShared(env, docId, action === "share");
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const documentDeleteMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/delete$/);
@@ -1428,7 +1428,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
       await deleteDocumentAndBlobs(env, docId);
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     // A record of what Darius has done, never a deadline calculated for
@@ -1442,7 +1442,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!(await data.getDocument(env.BENCH_NOTES, docId))) return notFound();
       await markDocumentFiled(env, docId, form.get("filedDate"));
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}documents/${docId}`, 303);
     }
 
     // One step past filed — who was served, how, when, and an optional
@@ -1476,7 +1476,7 @@ export async function handleBenchPost(request, env, url, ctx) {
         proofOfServiceMimeType,
       });
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}documents/${docId}`, 303);
     }
 
     const recordingDeleteMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings\/([^/]+)\/delete$/);
@@ -1488,7 +1488,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (recording.audio_storage_ref) await deleteBlobRefs(env, [recording.audio_storage_ref]);
       await deleteDocumentRecording(env, recordingId);
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}documents/${docId}`, 303);
     }
 
     const caseDeleteMatch = path.match(/^case\/([^/]+)\/delete$/);
@@ -1499,7 +1499,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const confirmTitle = (form.get("confirmTitle") || "").trim();
       if (confirmTitle !== caseRow.title) return html(errorPage(`That doesn't match the case title exactly ("${caseRow.title}") — nothing was deleted.`), 400);
       await deleteCaseAndBlobs(env, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}`, 303);
     }
 
     // Darius's own reference notes, never AI-generated and never fed into
@@ -1511,7 +1511,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const caseId = localRulesMatch[1];
       if (!(await getCase(env, caseId))) return notFound();
       await updateCaseLocalRules(env, caseId, form.get("notes"));
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     // A deliberate action Darius is waiting on, unlike every other
@@ -1522,7 +1522,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const caseId = summaryRefreshMatch[1];
       if (!(await getCase(env, caseId))) return notFound();
       await regenerateCaseSummary(env, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     const recordingMatch = path.match(/^case\/([^/]+)\/documents\/([^/]+)\/recordings$/);
@@ -1569,7 +1569,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       // nothing to transcribe, so it just regenerates directly.
       if (audioStorageRef) transcribeAndRegenerateInBackground(env, ctx, recordingId, caseId);
       else regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}documents/${docId}`, 303);
     }
 
     // Correcting a Whisper transcription mistake — same "auto until Darius
@@ -1586,7 +1586,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       if (!transcript) return html(errorPage("A transcript can't be saved empty — delete the recording instead if it's wrong entirely."), 400);
       await editRecordingTranscript(env, recordingId, transcript);
       regenerateCaseSummaryInBackground(env, ctx, caseId);
-      return Response.redirect(`https://darius.life${PREFIX}documents/${docId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}documents/${docId}`, 303);
     }
 
     const notesMatch = path.match(/^case\/([^/]+)\/notes$/);
@@ -1597,7 +1597,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const body = form.get("noteBody");
       if (!body) return html(errorPage("A note needs a body."), 400);
       await addEntrustedNote(env, { id: crypto.randomUUID(), caseId, caseLabel: caseRow.title, body });
-      return Response.redirect(`https://darius.life${PREFIX}case/${caseId}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}case/${caseId}`, 303);
     }
 
     if (path === "grants") {
@@ -1606,13 +1606,13 @@ export async function handleBenchPost(request, env, url, ctx) {
       const caseIds = form.getAll("caseIds");
       const codeHash = await sha256Hex(passphrase);
       await createGrant(env, { id: crypto.randomUUID(), codeHash, caseIds, label: form.get("grantLabel") });
-      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}`, 303);
     }
 
     const revokeMatch = path.match(/^grants\/([^/]+)\/revoke$/);
     if (revokeMatch) {
       await revokeGrant(env, revokeMatch[1]);
-      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}`, 303);
     }
 
     const passphraseMatch = path.match(/^grants\/([^/]+)\/passphrase$/);
@@ -1620,7 +1620,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const newPassphrase = form.get("newPassphrase");
       if (!newPassphrase || newPassphrase.length < 6) return html(errorPage("Passphrase must be at least 6 characters."), 400);
       await updateGrantPassphrase(env, passphraseMatch[1], await sha256Hex(newPassphrase));
-      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}`, 303);
     }
 
     if (path === "prep") {
@@ -1631,7 +1631,7 @@ export async function handleBenchPost(request, env, url, ctx) {
       const caseId = kind === "hearing" ? (form.get("caseId") || null) : null;
       const id = crypto.randomUUID();
       await addPrepSession(env, { id, kind, title, caseId, eventDate: form.get("eventDate"), context: form.get("context") });
-      return Response.redirect(`https://darius.life${PREFIX}prep/${id}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}prep/${id}`, 303);
     }
 
     // A deliberate action Darius is waiting on, same "await, don't
@@ -1652,13 +1652,13 @@ export async function handleBenchPost(request, env, url, ctx) {
       }
       const { pressureTest } = await generatePressureTest(env, session, record);
       if (pressureTest) await updatePrepSessionPressureTest(env, session.id, pressureTest);
-      return Response.redirect(`https://darius.life${PREFIX}prep/${session.id}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}prep/${session.id}`, 303);
     }
 
     const prepDeleteMatch = path.match(/^prep\/([^/]+)\/delete$/);
     if (prepDeleteMatch) {
       await deletePrepSession(env, prepDeleteMatch[1]);
-      return Response.redirect(`https://darius.life${PREFIX}prep`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}prep`, 303);
     }
 
     if (path === "scripture") {
@@ -1667,13 +1667,13 @@ export async function handleBenchPost(request, env, url, ctx) {
       const text = form.get("text");
       if (!reference || !translation || !text) return html(errorPage("A verse needs a reference, translation, and text."), 400);
       await addScriptureVerse(env, { id: crypto.randomUUID(), reference, translation, text, tags: form.get("tags") });
-      return Response.redirect(`https://darius.life${PREFIX}scripture`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}scripture`, 303);
     }
 
     const scriptureDeleteMatch = path.match(/^scripture\/([^/]+)\/delete$/);
     if (scriptureDeleteMatch) {
       await deleteScriptureVerse(env, scriptureDeleteMatch[1]);
-      return Response.redirect(`https://darius.life${PREFIX}scripture`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}scripture`, 303);
     }
 
     // Darius's own "pick again for today" — always recomputes, even though
@@ -1681,20 +1681,20 @@ export async function handleBenchPost(request, env, url, ctx) {
     // would otherwise just reuse what's already picked for today.
     if (path === "scripture/daily/refresh") {
       await getOrComputeDailyVerse(env, { force: true });
-      return Response.redirect(`https://darius.life${PREFIX}`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}`, 303);
     }
 
     if (path === "resources") {
       const name = form.get("name");
       if (!name) return html(errorPage("A resource needs a name."), 400);
       await addResource(env, { id: crypto.randomUUID(), name, phone: form.get("phone"), url: form.get("url"), notes: form.get("notes") });
-      return Response.redirect(`https://darius.life${PREFIX}resources`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}resources`, 303);
     }
 
     const resourceDeleteMatch = path.match(/^resources\/([^/]+)\/delete$/);
     if (resourceDeleteMatch) {
       await deleteResource(env, resourceDeleteMatch[1]);
-      return Response.redirect(`https://darius.life${PREFIX}resources`, 303);
+      return Response.redirect(`${url.origin}${PREFIX}resources`, 303);
     }
 
     return notFound();

@@ -1,6 +1,9 @@
-# Serves confidential.darius.life — Bench Notes' working side only
-# (Darius's own private docket: cases, four-layer timeline entries, glossary,
-# pattern-spotting). This Worker (darius-life-confidential) already existed
+# Serves confidential.darius.life — everything Bench Notes, in two sections:
+#   /bench/*     Darius's own private docket (cases, four-layer timeline entries,
+#                glossary, pattern-spotting) — behind Cloudflare Access.
+#   /entrusted/* everybody else: shared entries and documents, one passphrase per
+#                grant — NO Access identity. The Access application must therefore
+#                cover the /bench/* path only, not this whole Worker/hostname. This Worker (darius-life-confidential) already existed
 # with a real, dashboard-created Cloudflare Access application ("confidential
 # legal area", policy "Allowed readers") protecting its entire production/
 # preview URL — reused here exactly as-is, no changes made to that

@@ -153,6 +153,37 @@ await check("/control/ and /legal/private/ redirect to the Access login (Access 
   return p;
 });
 
+// Bench Notes lives entirely on confidential.darius.life, in two sections: /bench/*
+// (Darius's own, behind Access) and /entrusted/* (everybody else, passphrase, no Access).
+const CONFIDENTIAL = "https://confidential.darius.life";
+await check("Bench Notes: /bench/ (own section) redirects to the Access login", async () => {
+  const r = await fetchOnce(`${CONFIDENTIAL}/bench/`, "manual");
+  const host = (() => { try { return new URL(r.headers.get("location") ?? "", CONFIDENTIAL).hostname; } catch { return ""; } })();
+  return r.status === 302 && host.endsWith(".cloudflareaccess.com")
+    ? []
+    : [`/bench/ answered HTTP ${r.status}${host ? ` -> ${host}` : ""}, not a redirect to *.cloudflareaccess.com`];
+});
+await check("Bench Notes: /entrusted/ (everybody else) serves the passphrase page with no Access login", async () => {
+  const r = await fetchOnce(`${CONFIDENTIAL}/entrusted/`, "manual");
+  if (r.status !== 200) return [`/entrusted/ answered HTTP ${r.status} (${r.headers.get("location") ?? "no location"}) — the Access application must cover /bench/* only, not the whole hostname/Worker`];
+  const body = await r.text();
+  return /name="passphrase"/.test(body) ? [] : ["/entrusted/ answered 200 but is not the passphrase page"];
+});
+await check("Bench Notes pages are not given the site-wide strict CSP header (it blocks their forms and inline styles)", async () => {
+  const p = [];
+  for (const u of [`${CONFIDENTIAL}/entrusted/`, `${PUBLIC}/control/`]) {
+    const r = await fetchOnce(u, "manual");
+    const csp = r.headers.get("content-security-policy") ?? "";
+    if (/form-action\s+'none'/.test(csp) || /style-src\s+'self'\s*(;|$)/.test(csp)) p.push(`${u} carries the strict site-wide CSP header — exclude it from the Response Header Transform Rule (cloudflare/rules.md)`);
+  }
+  return p;
+});
+await check("darius.life/bench-entrusted/ redirects guests to the entrusted section's new home", async () => {
+  const r = await fetchOnce(`${PUBLIC}/bench-entrusted/`, "manual");
+  const loc = r.headers.get("location") ?? "";
+  return r.status === 301 && loc.startsWith(`${CONFIDENTIAL}/entrusted/`) ? [] : [`answered HTTP ${r.status} ${loc}`];
+});
+
 await check("the GitHub origin itself refuses /legal/private/ directly (acceptance 6)", async () => {
   const p = [];
   for (const ip of GITHUB_PAGES_IPS) {
