@@ -58,8 +58,11 @@ recorded before-state.
 Strict-Transport-Security and X-Content-Type-Options are now set by the native
 `security_header` zone setting above — **do not also set them here**, to avoid
 two sources of truth disagreeing. This rule only needs to add the other four,
-applied to all darius.life responses (both the GitHub Pages origin and the
-`/legal/private/*`/`/control/*` Worker):
+applied to all darius.life responses (the GitHub Pages origin and
+`/legal/private/*`) **except `/control/*`** — the rule's filter is
+`not starts_with(http.request.uri, "/control/")` (changed 2026-09-29). The control
+panel needs inline styles and a same-page form post, which the strict
+Content-Security-Policy below blocks; it sets its own CSP in its page instead:
 
 ```
 Content-Security-Policy: default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'
@@ -69,7 +72,7 @@ X-Frame-Options: DENY
 ```
 
 Applied 2026-09-29 from the dashboard (Rules → Transform Rules → Modify Response
-Header, rule "darius.life security headers", all incoming requests, four
+Header, rule "darius.life security headers", filter excluding `/control/`, four
 "Set static" headers). Confirmed live with `curl -I https://darius.life/`.
 
 ## Off (check 12)
