@@ -61,7 +61,7 @@ No separate hostname. `workers/private-legal` serves two paths on
 
 1. R2 → Create bucket: `darius-life-private`.
 2. Zero Trust → Access → Applications → Add → Self-hosted:
-   - Name: `darius.life private legal area`
+   - Name: `darius.life control panel`
    - Paths: `darius.life/legal/private/*` **and** `darius.life/control/*` —
      both on this one application, same policy. Neither is the whole domain
      (the public page must stay ungated).
