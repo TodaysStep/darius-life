@@ -60,8 +60,8 @@ database_id = "42490728-b48c-4332-ad61-559ebf589935"
 # reachable at all. Never darius.life/bench-entrusted/*, which has no Access
 # identity to check. (Also note: this is a DIFFERENT Access application from
 # the one protecting confidential.darius.life — do not conflate the two.)
-ACCESS_TEAM_DOMAIN = "REPLACE-ME.cloudflareaccess.com"
-ACCESS_AUD = "REPLACE-ME"
+ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
+ACCESS_AUD = "e976eb5d7bb3347de066bdba3b7b0b802d896f68eccb2a3ca752a124f78e9912"
 GITHUB_REPO = "TodaysStep/darius-life"
 GITHUB_BRANCH = "main"
 # ENTRUSTED_COOKIE_SECRET is a secret, not a var. HMAC-signs the Bench Notes
