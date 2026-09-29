@@ -7,15 +7,12 @@ per section 9's own requirement that these be "recorded... as applied."
 **As of 2026-09-28, applied and confirmed live** (checked directly against
 `https://darius.life/`, not assumed): DNS is proxied, SSL/TLS is Full (strict),
 minimum TLS is 1.2, Email Address Obfuscation is off, and HSTS +
-X-Content-Type-Options are live with the exact required values. **Still not
-applied**: the other four headers (Content-Security-Policy, Referrer-Policy,
-Permissions-Policy, X-Frame-Options — these need a Response Header Transform
-Rule, which needs Cloudflare's Rulesets API permission; the token in use as of
-this update can edit zone settings but not Rulesets, DNS records, Access
-applications, or purge cache), the www→apex Redirect Rule (may be moot — GitHub
-Pages already 301s www→apex on its own, confirmed live), and confirming Web
-Analytics/Browser Insights/Zaraz are off (no accessible endpoint found to check
-this with the current token — see docs/handoff-2026-09-27.md).
+X-Content-Type-Options are live with the exact required values. **Also applied and confirmed live on 2026-09-29**: Web Analytics
+auto-install for darius.life is disabled (no `cloudflareinsights` beacon in the
+page), and a Response Header Transform Rule sets the other four security
+headers on all responses. `node checks/live.mjs` passes every check, including
+acceptance 8 and 9. **Still not applied**: the www→apex Redirect Rule (moot —
+GitHub Pages already 301s www→apex on its own, confirmed live).
 
 ## DNS
 
@@ -71,15 +68,15 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 X-Frame-Options: DENY
 ```
 
-Not yet applied — needs Cloudflare's Rulesets API permission (or the
-dashboard), which the token in use as of 2026-09-28 doesn't have.
+Applied 2026-09-29 from the dashboard (Rules → Transform Rules → Modify Response
+Header, rule "darius.life security headers", all incoming requests, four
+"Set static" headers). Confirmed live with `curl -I https://darius.life/`.
 
 ## Off (check 12)
 
-- Web Analytics — not yet confirmed; no accessible endpoint found with the
-  current token. `checks/live.mjs` caught a `cloudflareinsights` beacon script
-  being injected intermittently on 2026-09-27, consistent with this being on.
-- Browser Insights — same as above.
+- Web Analytics / Browser Insights — **off** as of 2026-09-29 (Web Analytics →
+  Manage site → Real User Measurements: Disable). Before that,
+  `checks/live.mjs` caught a `cloudflareinsights` beacon being injected.
 - Zaraz — not checked.
 - Rocket Loader — confirmed **off** (zone setting `rocket_loader`).
 - Email Address Obfuscation — applied **off** 2026-09-28 via the Zone Settings
