@@ -26,7 +26,7 @@ const readJSON = (p) => JSON.parse(read(p));
 const REQUIRED = `identity, status.nws, status.personal, resume, terms,
 notes.todays-notes, notes.todays-step, notes.founder-notes, notes.line,
 legal.blurb, legal.private-login, legal.scenic-drive, legal.trademarks,
-legal.pro, legal.pro-policy, legal.correspondence, legal.li-privacy,
+legal.pe-act, legal.pro, legal.pro-policy, legal.correspondence, legal.li-privacy,
 legal.li-terms, legal.schedule.songsketch, legal.schedule.napkinsketch,
 legal.schedule.nurture, legal.law-enforcement, legal.receipt-verify,
 legal.identity-distortion,
