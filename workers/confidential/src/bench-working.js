@@ -10,8 +10,8 @@
 // for how its real team domain/AUD were found. requireAccess below is this
 // module's own independent re-check of the Access JWT, same defense-in-depth
 // pattern as every other gated route in this repo (workers/shared/access.js).
-// This module and bench-entrusted.js (a different Worker entirely — see its
-// own header) deliberately share no query helper: this file is the only
+// This module and bench-entrusted.js (the /entrusted/* section of this same
+// Worker — see its own header) deliberately share no query helper: this file is the only
 // place in either Worker that ever reads or writes cases, docket_entries,
 // patterns, or glossary_terms. That is what keeps the entrusted side
 // structurally unable to reach this data, rather than merely filtered away

@@ -177,3 +177,25 @@ test("a real guest session shows a shared entry's fact but never its private lay
   assert.doesNotMatch(html, /SECRET-COMMENTARY/);
   assert.doesNotMatch(html, /SECRET-TAKEAWAYS/);
 });
+
+// The guest section shares a Worker with Darius's own docket, so its isolation is
+// this module's own discipline: it may import only the shared view/crypto/style
+// modules — never the working side or its data helpers — and its only direct SQL
+// is against access_grants. Everything a guest sees comes through
+// listSharedEntries/listSharedDocuments/listNotesForCases in bench-entrusted-view.js.
+test("the entrusted module stays structurally separate from the working side", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./bench-entrusted.js", import.meta.url), "utf8");
+  const imports = [...src.matchAll(/^import\s.*?from\s+"([^"]+)";/gms)].map((m) => m[1]);
+  assert.deepEqual(
+    imports.sort(),
+    ["../../shared/bench-crypto.js", "../../shared/bench-entrusted-view.js", "../../shared/bench-style.js"],
+    "bench-entrusted.js may only import the shared view, crypto and style modules",
+  );
+  const sql = [...src.matchAll(/prepare\(\s*["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
+  assert.ok(sql.length > 0, "expected at least one query to check");
+  for (const q of sql) {
+    assert.match(q, /\bFROM\s+access_grants\b|\bUPDATE\s+access_grants\b|\bINSERT\s+INTO\s+access_grants\b/i, `unexpected table in: ${q}`);
+    assert.doesNotMatch(q, /docket_entries|patterns|glossary_terms|\bcases\b/i, `working-side table in: ${q}`);
+  }
+});

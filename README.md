@@ -58,10 +58,17 @@ file — both the control panel and a manual edit write only to them.
 
 ## Bench Notes — private case management
 
-Split across two Workers on two hostnames, on purpose, because the two sides
-have genuinely different trust requirements. Both bind the same D1 database
-(`darius-life-bench-notes`); the split is enforced by which query functions
-each Worker's own source tree contains, not by a shared permission check.
+Everything lives on **`confidential.darius.life`**, in two sections with different
+trust requirements: `/bench/*` is Darius's own docket, and `/entrusted/*` is for
+everybody else Darius shares with. One Worker (`darius-life-confidential`) and one
+D1 database (`darius-life-bench-notes`) serve both. The separation is enforced in
+code and tested: `bench-entrusted.js` never imports the working side's helpers and
+its only direct query is against `access_grants` (see `bench-entrusted.test.mjs`,
+"the entrusted module stays structurally separate"); everything else it shows comes
+through the single hardcoded query in `workers/shared/bench-entrusted-view.js`.
+(Until 2026-09-29 the guest section was its own Worker on darius.life; it moved so
+that both sections share one hostname. That trades a separate deployable for
+module-level isolation, so keep that test green.)
 
 **`https://confidential.darius.life/bench/`** (`workers/confidential/`) is
 Darius's own docket:
@@ -78,7 +85,7 @@ Darius's own docket:
   or an actual **upload** (`storage_kind = 'upload'`; `storage_ref` is then
   an internal R2 key, never a URL — each side serves the same bytes through
   its own route: `/bench/documents/:id/file` here, Access-gated;
-  `/bench-entrusted/documents/:id/file` on the entrusted side, re-deriving
+  `/entrusted/documents/:id/file` on the entrusted side, re-deriving
   the exact same shared/case-scoped list `listSharedDocuments` already
   enforces, not a second query that could drift from it). Both bind the
   same R2 bucket the private legal area already used
@@ -385,14 +392,16 @@ Worker's entire production/preview URL at the edge (not a specific path), so
 (`workers/shared/access.js`) as defense in depth, same as every other gated
 route in this repo, even though Access has already checked once.
 
-**`https://darius.life/bench-entrusted/`** (`workers/private-legal/`) is a
-**structurally separate** area for guests Darius manually shares with — a
+**`https://confidential.darius.life/entrusted/`** (`workers/confidential/src/bench-entrusted.js`)
+is the **structurally separate** section for guests Darius manually shares with — a
 single universal passphrase per grant (`workers/shared/bench-crypto.js`
 hashes it; the plaintext is never stored), revocable at any time from the
 working side, scoped to specific cases. No Cloudflare Access gate — guests
-have no Access identity, and it *can't* live behind confidential.darius.life's
-Access application even if it wanted to, since that application gates the
-whole Worker regardless of path. It shows the same timeline-and-documents
+have no Access identity — so the Access application must cover
+`confidential.darius.life` path `bench/*` only, never the whole hostname or Worker
+(`docs/cloudflare-setup.md`; `checks/live.mjs` fails otherwise). The old address,
+`darius.life/bench-entrusted/*`, only 301-redirects here so links already given out
+keep working. It shows the same timeline-and-documents
 structure as the working side, limited to whatever's been explicitly shared:
 
 - `workers/shared/bench-entrusted-view.js` is the entire confidentiality
