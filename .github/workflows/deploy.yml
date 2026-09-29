@@ -61,22 +61,6 @@ jobs:
             GH_COMMIT_TOKEN
         env:
           GH_COMMIT_TOKEN: ${{ secrets.GH_COMMIT_TOKEN }}
-      # A separate, best-effort step rather than a second name in the action
-      # above: wrangler-action hard-fails the whole job if a listed secret has
-      # no value, and ENTRUSTED_COOKIE_SECRET doesn't exist as a repo secret
-      # yet (add it — Settings → Secrets and variables → Actions — any random
-      # 32+ byte value works; rotating it instantly signs out every open
-      # Bench Notes entrusted session). Until it's added, this step is a no-op
-      # and the entrusted side simply has no signing key — see
-      # workers/shared/bench-crypto.js — rather than blocking every other deploy.
-      - name: Upload the Bench Notes entrusted-side cookie secret, if set
-        if: ${{ env.ENTRUSTED_COOKIE_SECRET != '' }}
-        working-directory: workers/private-legal
-        run: npx wrangler secret put ENTRUSTED_COOKIE_SECRET <<< "$ENTRUSTED_COOKIE_SECRET"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ENTRUSTED_COOKIE_SECRET: ${{ secrets.ENTRUSTED_COOKIE_SECRET }}
 
   deploy-confidential-worker:
     needs: build
@@ -89,11 +73,24 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/confidential
           command: deploy
-          # No secrets to upload — Bench Notes' working side needs no
-          # credential of its own; it reads/writes only the shared D1
-          # database, and confidentiality is enforced by the pre-existing
-          # Cloudflare Access application on confidential.darius.life
-          # itself, reused as-is (see workers/confidential/wrangler.toml).
+          # No secrets uploaded through the action itself; the entrusted section's
+          # signing key is handled by the step below.
+      # The entrusted section (/entrusted/*, "everybody else") signs its session
+      # cookie with ENTRUSTED_COOKIE_SECRET. Use the repo secret if one is set;
+      # otherwise make sure the Worker has SOME key (generated here, never logged)
+      # so guests can always sign in. Rotating it signs out every open guest session.
+      - name: Make sure the entrusted section has its cookie-signing secret
+        working-directory: workers/confidential
+        run: |
+          if [ -n "$ENTRUSTED_COOKIE_SECRET" ]; then
+            npx wrangler secret put ENTRUSTED_COOKIE_SECRET <<< "$ENTRUSTED_COOKIE_SECRET"
+          elif ! npx wrangler secret list | grep -q '"ENTRUSTED_COOKIE_SECRET"'; then
+            openssl rand -hex 32 | npx wrangler secret put ENTRUSTED_COOKIE_SECRET
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENTRUSTED_COOKIE_SECRET: ${{ secrets.ENTRUSTED_COOKIE_SECRET }}
 
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live

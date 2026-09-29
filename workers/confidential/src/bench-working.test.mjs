@@ -1179,7 +1179,7 @@ test("POST /bench/scripture/daily/refresh forces a new pick even though today's 
   const { env, fakeD1 } = setup(jwk);
   fakeD1.tables.scripture_verses.push({ id: "v1", reference: "Joshua 1:9", translation: "WEB", text: "Be strong...", tags: "courage", created_at: "t" });
   fakeD1.tables.scripture_verses.push({ id: "v2", reference: "Philippians 4:6-7", translation: "WEB", text: "In nothing be anxious...", tags: "anxiety", created_at: "t" });
-  fakeD1.tables.daily_verses.push({ date: "2026-09-28", verse_id: "v1", rationale: "First pick.", created_at: "t" });
+  fakeD1.tables.daily_verses.push({ date: new Date().toISOString().slice(0, 10), verse_id: "v1", rationale: "First pick.", created_at: "t" });
   env.AI = { run: async () => ({ response: '{"id": "v2", "reason": "Re-picked for anxiety."}' }) };
 
   const res = await handleBenchPost(

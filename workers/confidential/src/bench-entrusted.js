@@ -1,7 +1,7 @@
-// darius.life/bench-entrusted/* — Bench Notes entrusted side. Documents and
+// confidential.darius.life/entrusted/* — Bench Notes entrusted side (the section for everybody else; the working side, /bench/*, is Darius's own). Documents and
 // shared timeline entries, manually shared, one universal passphrase per
-// grant, revocable. This is a SIBLING path to /bench/*, not a subpath of it
-// (see wrangler.toml). This module never queries cases, patterns, or
+// grant, revocable. This is a SIBLING path to /bench/*, not a subpath of it,
+// on the same hostname and Worker as the working side. This module never queries cases, patterns, or
 // glossary_terms at all, and its only access to docket_entries is through
 // listSharedEntries in workers/shared/bench-entrusted-view.js — a single
 // hardcoded query that can only ever return fact/entry_date for entries
@@ -15,7 +15,7 @@ import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/ben
 import { sha256Hex, signSession, verifySession } from "../../shared/bench-crypto.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
-export const PREFIX = "/bench-entrusted/";
+export const PREFIX = "/entrusted/";
 const COOKIE_NAME = "bench_entrusted_session";
 const SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 hours
 

@@ -11,7 +11,9 @@
 // their own headers for why neither is behind Access.
 import { PREFIX as LEGAL_PREFIX, handleLegalPrivate, renderIndex } from "./legal.js";
 import { PREFIX as CONTROL_PREFIX, handleControlGet, handleControlPost } from "./control.js";
-import { PREFIX as BENCH_ENTRUSTED_PREFIX, handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
+// Guests' original address; the entrusted side now lives on confidential.darius.life/entrusted/.
+const BENCH_ENTRUSTED_PREFIX = "/bench-entrusted/";
+const ENTRUSTED_HOME = "https://confidential.darius.life/entrusted/";
 import { PREFIX as BENCH_API_PREFIX, handleBenchApi } from "./bench-api.js";
 import { verifyAccessJwt, base64UrlToJson, resetCertsCacheForTests } from "../../shared/access.js";
 
@@ -28,8 +30,11 @@ export default {
     }
 
     if (url.pathname.startsWith(BENCH_ENTRUSTED_PREFIX)) {
-      if (request.method === "GET") return handleBenchEntrustedGet(request, env, url);
-      if (request.method === "POST") return handleBenchEntrustedPost(request, env, url);
+      // Bookmarks and links already handed to guests keep working. GET only: a
+      // passphrase must never be POSTed to, or redirected through, another address.
+      if (request.method === "GET" || request.method === "HEAD") {
+        return Response.redirect(ENTRUSTED_HOME + url.pathname.slice(BENCH_ENTRUSTED_PREFIX.length) + url.search, 301);
+      }
       return new Response("Method Not Allowed", { status: 405 });
     }
 

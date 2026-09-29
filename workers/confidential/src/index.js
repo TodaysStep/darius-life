@@ -5,10 +5,14 @@
 // (see src/shared/access.js) — belt and suspenders, same as every other
 // gated route in this repo, even though Access has already checked once.
 //
-// This Worker serves only Bench Notes' working side (Darius's own private
-// docket). The entrusted side is deliberately NOT here — see
-// workers/private-legal/src/bench-entrusted.js's own header for why it
-// cannot live behind this same gate.
+// One hostname, two sections, deliberately separate modules:
+//   /bench/*     Darius's own working docket — Access-gated and independently
+//                JWT-verified (bench-working.js).
+//   /entrusted/* everybody else — a passphrase per grant, no Access identity
+//                (bench-entrusted.js). It is its own complete authentication
+//                boundary, so the Access application must cover /bench/* only,
+//                not this whole hostname/Worker (see docs/cloudflare-setup.md).
+import { PREFIX as ENTRUSTED_PREFIX, handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
 import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
 
 export default {
@@ -34,6 +38,12 @@ export default {
       // multipart/form-data request.formData() would otherwise have to
       // buffer whole into the Worker's own 128 MB memory ceiling.
       if (request.method === "PUT") return handleBenchPut(request, env, url);
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    if (url.pathname.startsWith(ENTRUSTED_PREFIX)) {
+      if (request.method === "GET") return handleBenchEntrustedGet(request, env, url);
+      if (request.method === "POST") return handleBenchEntrustedPost(request, env, url);
       return new Response("Method Not Allowed", { status: 405 });
     }
 

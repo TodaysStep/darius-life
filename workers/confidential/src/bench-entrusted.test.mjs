@@ -16,8 +16,8 @@ function setup() {
 async function loginAndGetCookie(env, passphrase) {
   const form = new URLSearchParams({ passphrase });
   const res = await handleBenchEntrustedPost(
-    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
-    env, new URL("https://darius.life/bench-entrusted/login"),
+    new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://confidential.darius.life/entrusted/login"),
   );
   return extractSetCookie(res);
 }
@@ -29,9 +29,9 @@ function extractSetCookie(res) {
   return raw ? raw.split(";")[0] : null;
 }
 
-test("GET /bench-entrusted/ with no cookie shows the login form, not the portal", async () => {
+test("GET /entrusted/ with no cookie shows the login form, not the portal", async () => {
   const { env } = setup();
-  const res = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/"), env, new URL("https://darius.life/bench-entrusted/"));
+  const res = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/"), env, new URL("https://confidential.darius.life/entrusted/"));
   assert.equal(res.status, 200);
   const html = await res.text();
   assert.match(html, /Passphrase/);
@@ -43,8 +43,8 @@ test("logging in with the wrong passphrase is rejected and issues no cookie", as
   fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: await sha256Hex("right-code"), case_ids_json: "[]", label: null, created_at: "t", revoked_at: null });
 
   const form = new URLSearchParams({ passphrase: "wrong-code" });
-  const req = new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
-  const res = await handleBenchEntrustedPost(req, env, new URL("https://darius.life/bench-entrusted/login"));
+  const req = new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await handleBenchEntrustedPost(req, env, new URL("https://confidential.darius.life/entrusted/login"));
   assert.equal(res.status, 401);
   assert.equal(res.headers.get("set-cookie"), null);
 });
@@ -56,13 +56,13 @@ test("logging in with the right passphrase issues a session cookie that reaches 
   fakeD1.tables.documents.push({ id: "doc-2", case_id: "case-1", case_label: "Family matter", title: "Unshared draft", storage_ref: "https://example.com/draft", filed_date: null, shared_at: null, created_at: "t" });
 
   const form = new URLSearchParams({ passphrase: "right-code" });
-  const loginReq = new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
-  const loginRes = await handleBenchEntrustedPost(loginReq, env, new URL("https://darius.life/bench-entrusted/login"));
+  const loginReq = new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const loginRes = await handleBenchEntrustedPost(loginReq, env, new URL("https://confidential.darius.life/entrusted/login"));
   assert.equal(loginRes.status, 303);
   const cookie = extractSetCookie(loginRes);
   assert.ok(cookie);
 
-  const portalRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", cookie), env, new URL("https://darius.life/bench-entrusted/"));
+  const portalRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/", cookie), env, new URL("https://confidential.darius.life/entrusted/"));
   assert.equal(portalRes.status, 200);
   const html = await portalRes.text();
   assert.match(html, /Family matter/);
@@ -78,11 +78,11 @@ test("a document belonging to a case outside the grant's scope is never shown", 
 
   const form = new URLSearchParams({ passphrase: "right-code" });
   const loginRes = await handleBenchEntrustedPost(
-    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
-    env, new URL("https://darius.life/bench-entrusted/login"),
+    new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://confidential.darius.life/entrusted/login"),
   );
   const cookie = extractSetCookie(loginRes);
-  const portalRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", cookie), env, new URL("https://darius.life/bench-entrusted/"));
+  const portalRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/", cookie), env, new URL("https://confidential.darius.life/entrusted/"));
   const html = await portalRes.text();
   assert.match(html, /Visible doc/);
   assert.doesNotMatch(html, /Secret doc/);
@@ -95,14 +95,14 @@ test("revoking a grant locks out its existing session immediately, even with a s
 
   const form = new URLSearchParams({ passphrase: "right-code" });
   const loginRes = await handleBenchEntrustedPost(
-    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
-    env, new URL("https://darius.life/bench-entrusted/login"),
+    new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://confidential.darius.life/entrusted/login"),
   );
   const cookie = extractSetCookie(loginRes);
 
   fakeD1.tables.access_grants[0].revoked_at = "2026-09-28T00:00:00.000Z";
 
-  const portalRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", cookie), env, new URL("https://darius.life/bench-entrusted/"));
+  const portalRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/", cookie), env, new URL("https://confidential.darius.life/entrusted/"));
   assert.equal(portalRes.status, 200);
   const html = await portalRes.text();
   assert.match(html, /revoked/i);
@@ -113,14 +113,14 @@ test("a forged cookie (wrong secret) is rejected", async () => {
   const { env, fakeD1 } = setup();
   fakeD1.tables.access_grants.push({ id: "grant-1", code_hash: "whatever", case_ids_json: "[]", label: null, created_at: "t", revoked_at: null });
   const forged = `bench_entrusted_session=${Buffer.from(JSON.stringify({ gid: "grant-1", exp: 9999999999 })).toString("base64url")}.forged-signature`;
-  const res = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", forged), env, new URL("https://darius.life/bench-entrusted/"));
+  const res = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/", forged), env, new URL("https://confidential.darius.life/entrusted/"));
   const html = await res.text();
   assert.match(html, /Passphrase/);
 });
 
 test("logout clears the cookie", async () => {
   const { env } = setup();
-  const res = await handleBenchEntrustedPost(new Request("https://darius.life/bench-entrusted/logout", { method: "POST" }), env, new URL("https://darius.life/bench-entrusted/logout"));
+  const res = await handleBenchEntrustedPost(new Request("https://confidential.darius.life/entrusted/logout", { method: "POST" }), env, new URL("https://confidential.darius.life/entrusted/logout"));
   assert.equal(res.status, 303);
   assert.match(res.headers.get("set-cookie"), /Max-Age=0/);
 });
@@ -132,7 +132,7 @@ test("an uploaded, shared, in-scope document's bytes are servable to a real gues
   await fakeR2.put("bench-documents/doc-1/motion.pdf", "the actual bytes", { httpMetadata: { contentType: "application/pdf" } });
 
   const cookie = await loginAndGetCookie(env, "right-code");
-  const res = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/doc-1/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/doc-1/file"));
+  const res = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/documents/doc-1/file", cookie), env, new URL("https://confidential.darius.life/entrusted/documents/doc-1/file"));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "application/pdf");
   assert.equal(Buffer.from(await res.arrayBuffer()).toString(), "the actual bytes");
@@ -147,11 +147,11 @@ test("an uploaded document's file route is a 404 when unshared, out of the grant
   await fakeR2.put("k2", "secret-2");
 
   const cookie = await loginAndGetCookie(env, "right-code");
-  const noSessionRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/unshared-doc/file"), env, new URL("https://darius.life/bench-entrusted/documents/unshared-doc/file"));
+  const noSessionRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/documents/unshared-doc/file"), env, new URL("https://confidential.darius.life/entrusted/documents/unshared-doc/file"));
   assert.equal(noSessionRes.status, 404);
-  const unsharedRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/unshared-doc/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/unshared-doc/file"));
+  const unsharedRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/documents/unshared-doc/file", cookie), env, new URL("https://confidential.darius.life/entrusted/documents/unshared-doc/file"));
   assert.equal(unsharedRes.status, 404);
-  const outOfScopeRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/documents/out-of-scope-doc/file", cookie), env, new URL("https://darius.life/bench-entrusted/documents/out-of-scope-doc/file"));
+  const outOfScopeRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/documents/out-of-scope-doc/file", cookie), env, new URL("https://confidential.darius.life/entrusted/documents/out-of-scope-doc/file"));
   assert.equal(outOfScopeRes.status, 404);
 });
 
@@ -166,11 +166,11 @@ test("a real guest session shows a shared entry's fact but never its private lay
 
   const form = new URLSearchParams({ passphrase: "right-code" });
   const loginRes = await handleBenchEntrustedPost(
-    new Request("https://darius.life/bench-entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
-    env, new URL("https://darius.life/bench-entrusted/login"),
+    new Request("https://confidential.darius.life/entrusted/login", { method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded" } }),
+    env, new URL("https://confidential.darius.life/entrusted/login"),
   );
   const cookie = extractSetCookie(loginRes);
-  const portalRes = await handleBenchEntrustedGet(cookieReq("https://darius.life/bench-entrusted/", cookie), env, new URL("https://darius.life/bench-entrusted/"));
+  const portalRes = await handleBenchEntrustedGet(cookieReq("https://confidential.darius.life/entrusted/", cookie), env, new URL("https://confidential.darius.life/entrusted/"));
   const html = await portalRes.text();
   assert.match(html, /Hearing held\./);
   assert.doesNotMatch(html, /SECRET-DIRECTION/);

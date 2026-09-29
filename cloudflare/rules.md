@@ -59,8 +59,11 @@ Strict-Transport-Security and X-Content-Type-Options are now set by the native
 `security_header` zone setting above — **do not also set them here**, to avoid
 two sources of truth disagreeing. This rule only needs to add the other four,
 applied to all darius.life responses (the GitHub Pages origin and
-`/legal/private/*`) **except `/control/*`** — the rule's filter is
-`not starts_with(http.request.uri, "/control/")` (changed 2026-09-29). The control
+`/legal/private/*`) **except `/control/*`** — the rule's filter should be
+`(http.host eq "darius.life" and not starts_with(http.request.uri.path, "/control/"))`
+(the rule as first deployed on 2026-09-29 also caught `confidential.darius.life` and
+`/bench-entrusted/`, whose pages need inline styles and form posts — the live checks
+now fail if any Bench Notes page or `/control/` gets the strict header). The control
 panel needs inline styles and a same-page form post, which the strict
 Content-Security-Policy below blocks; it sets its own CSP in its page instead:
 

@@ -125,3 +125,19 @@ JavaScript).
   headers, the private area's access gate, the direct-origin-refuses-it
   check, and every other Section 10 acceptance check that only a live site
   can prove.
+
+## Bench Notes on confidential.darius.life — two sections, one hostname
+
+`confidential.darius.life` (Worker `darius-life-confidential`) serves both halves of
+Bench Notes:
+
+- `/bench/*` — Darius's own docket. Behind the Cloudflare Access application; the Worker
+  independently re-verifies the Access JWT.
+- `/entrusted/*` — everybody else. Passphrase per grant, revocable, scoped to specific
+  cases. Guests have no Access identity, so this section must NOT be behind Access.
+
+The Access application must therefore cover **`confidential.darius.life` path
+`bench/*` only** (public hostname destination with that path), and must not use a
+"Workers" destination for `darius-life-confidential`, which would gate the whole Worker
+including `/entrusted/*`. `checks/live.mjs` fails until this is the case.
+`darius.life/bench-entrusted/*` only redirects to `/entrusted/` so old guest links work.
