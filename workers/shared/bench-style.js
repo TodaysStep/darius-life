@@ -19,9 +19,9 @@ export const headers = (contentType) => ({
 // Always the darius.life-hosted copy (the public static build), by absolute
 // URL, never a relative path: confidential.darius.life is a different
 // Worker with no /assets/* route of its own (a relative path there 404s —
-// this broke the icon there until fixed), and darius.life/bench-entrusted/*
-// resolves the same URL as a harmless same-origin request. One file, one
-// place it's served from, referenced the same way from both Workers.
+// this broke the icon there until fixed), and the icon is not part of
+// this Worker's own routes. One file, one place it's served from, referenced
+// the same way from both sections.
 export const STENOTYPE_URL = "https://darius.life/assets/bench/stenotype.jpg";
 
 export const STENOTYPE_ICON = (size = 96) =>
