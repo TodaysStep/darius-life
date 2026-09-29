@@ -5,6 +5,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+  issues: write
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -14,11 +15,37 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm ci
-      # Reports only — this workflow never blocks a deploy (deploy.yml's own
-      # verify-live job does that, on every push). This one exists to catch a live
-      # regression between pushes, since nothing else runs on a schedule.
-      - run: node checks/live.mjs
+      # Never blocks a deploy (deploy.yml's own verify-live job does that, on every
+      # push). This one exists to catch a live regression between pushes, since
+      # nothing else runs on a schedule. A failure used to end as a log warning only,
+      # which nobody is notified of; it now opens (or updates) a GitHub issue, which
+      # emails the repository's watchers, and the job itself is marked failed.
+      - run: node checks/live.mjs 2>&1 | tee live-report.txt; exit "${PIPESTATUS[0]}"
         continue-on-error: true
         id: verify
+      - name: Open or update an issue on failure, close it on recovery
+        uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.verify.outcome }}
+        with:
+          script: |
+            const fs = require("fs");
+            const title = "darius.life live verification is failing";
+            const { owner, repo } = context.repo;
+            const open = (await github.rest.issues.listForRepo({ owner, repo, state: "open", per_page: 100 }))
+              .data.find((i) => i.title === title && !i.pull_request);
+            const run = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            if (process.env.OUTCOME === "failure") {
+              const failing = fs.readFileSync("live-report.txt", "utf8").split("\n")
+                .filter((l) => /^(FAIL|\s+- )/.test(l)).join("\n").slice(0, 3000);
+              const body = `The scheduled live check found failures.\n\n\`\`\`\n${failing}\n\`\`\`\n\nRun: ${run}`;
+              if (open) await github.rest.issues.createComment({ owner, repo, issue_number: open.number, body });
+              else await github.rest.issues.create({ owner, repo, title, body });
+            } else if (open) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.number, body: `Live verification passes again. Run: ${run}` });
+              await github.rest.issues.update({ owner, repo, issue_number: open.number, state: "closed" });
+            }
       - if: steps.verify.outcome == 'failure'
-        run: echo "::warning::Live verification found failures — see the job summary above."
+        run: |
+          echo "::error::Live verification found failures — see the issue opened in this repository."
+          exit 1

@@ -133,6 +133,26 @@ await check('/legal/private/ requires Access login — denies an unauthenticated
   return [];
 });
 
+// The check above accepts any non-200 from the Worker — including the Worker's own
+// 403 when Access isn't actually in front of it (which is exactly how a missing Access
+// application looked before 2026-09-29). This one requires the real thing: an
+// unauthenticated request must be redirected to the Cloudflare Access login.
+await check("/control/ and /legal/private/ redirect to the Access login (Access is actually in front)", async () => {
+  const p = [];
+  for (const route of ["/control/", "/legal/private/"]) {
+    const r = await fetchOnce(`${PUBLIC}${route}`, "manual");
+    const loc = r.headers.get("location") ?? "";
+    let host = "";
+    try {
+      host = new URL(loc, PUBLIC).hostname;
+    } catch {}
+    if (r.status !== 302 || !host.endsWith(".cloudflareaccess.com")) {
+      p.push(`${route} answered HTTP ${r.status}${loc ? ` -> ${host || loc}` : ""}, not a redirect to *.cloudflareaccess.com — the Access application is missing or does not cover this path`);
+    }
+  }
+  return p;
+});
+
 await check("the GitHub origin itself refuses /legal/private/ directly (acceptance 6)", async () => {
   const p = [];
   for (const ip of GITHUB_PAGES_IPS) {
