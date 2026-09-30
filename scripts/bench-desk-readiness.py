@@ -16,7 +16,8 @@ def inspect():
     names = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BENCH_OWNER_EMAIL",
              "BENCH_DESK_OWNER_ID", "BENCH_DESK_PRINCIPALS")
     report = {"github_configuration": {name: bool(os.getenv(name)) for name in names},
-              "cloudflare": {}, "production_acceptance": "not_performed"}
+              "cloudflare": {}, "cloudflare_access_verified": False,
+              "configuration_ready": False, "production_acceptance": "not_performed"}
     token = os.getenv("CLOUDFLARE_API_TOKEN", "")
     account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     if not token or not re.fullmatch(r"[a-fA-F0-9]{32}", account):
@@ -46,17 +47,21 @@ def inspect():
         "darius-life-confidential": ("BENCH_NOTES", "BENCH_OWNER_EMAIL", "ENTRUSTED_COOKIE_SECRET"),
     }
     reachable = True
+    required_bindings_present = True
     for script, expected in requirements.items():
         result, status = get("/workers/scripts/" + script + "/settings")
         bindings = result.get("bindings", []) if isinstance(result, dict) else []
         present = {b.get("name") for b in bindings if isinstance(b, dict)}
         report["cloudflare"][script] = {"status": status, "required_bindings": {n: n in present for n in expected}}
         reachable = reachable and status == "reachable"
+        required_bindings_present = required_bindings_present and all(n in present for n in expected)
     result, status = get("/d1/database/42490728-b48c-4332-ad61-559ebf589935")
     matches = isinstance(result, dict) and result.get("name") == "darius-life-bench-notes"
     report["cloudflare"]["bench_database"] = {"status": status, "expected_database": matches}
     # Reading metadata proves access, not deployed code, migration, or a journey.
-    return report, reachable and matches and all(report["github_configuration"].values())
+    report["cloudflare_access_verified"] = reachable and matches
+    report["configuration_ready"] = report["cloudflare_access_verified"] and required_bindings_present and all(report["github_configuration"].values())
+    return report, report["configuration_ready"]
 
 
 if __name__ == "__main__":

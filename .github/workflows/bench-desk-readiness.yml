@@ -4,6 +4,7 @@ on:
     branches: [codex/bench-notes-publishing-desk-20260930]
     paths:
       - scripts/bench-desk-readiness.py
+      - scripts/bench-desk-readiness.test.py
       - .github/workflows/bench-desk-readiness.yml
   workflow_dispatch:
 permissions:
@@ -14,6 +15,8 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - name: Verify readiness cannot expose credentials or report incomplete configuration as ready
+        run: python3 scripts/bench-desk-readiness.test.py
       - name: Inspect only deployment flags and Cloudflare resource metadata
         run: python3 scripts/bench-desk-readiness.py
         env:
