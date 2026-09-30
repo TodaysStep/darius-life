@@ -13,7 +13,7 @@
 // authentication boundary.
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex, signSession, verifySession } from "../../shared/bench-crypto.js";
-import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
+import { listSharedDocuments, listNotesForCases, listSharedEntries, listDeskUpdates, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 
 export const PREFIX = "/entrusted/";
 const COOKIE_NAME = "bench_entrusted_session";
@@ -71,11 +71,11 @@ function documentGuestHref(d) {
   return `${PREFIX}documents/${d.id}/file`;
 }
 
-function renderPortal(documents, notes, entries) {
+function renderPortal(documents, notes, entries, updates = []) {
   return benchPage(
     "Bench Notes — Entrusted access",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access</span></h1></header>
-${renderEntrustedView(documents, notes, entries, { documentHref: documentGuestHref })}
+${renderEntrustedView(documents, notes, entries, { documentHref: documentGuestHref, updates })}
 <div class="ticker"></div>
 <form method="post" action="${PREFIX}logout"><button type="submit">Sign out</button></form>`,
   );
@@ -131,12 +131,13 @@ export async function handleBenchEntrustedGet(request, env, url) {
   }
 
   const caseIds = JSON.parse(grant.case_ids_json || "[]");
-  const [documents, notes, entries] = await Promise.all([
+  const [documents, notes, entries, updates] = await Promise.all([
     listSharedDocuments(env.BENCH_NOTES, caseIds),
     listNotesForCases(env.BENCH_NOTES, caseIds),
     listSharedEntries(env.BENCH_NOTES, caseIds),
+    listDeskUpdates(env.BENCH_NOTES, caseIds, grant.id),
   ]);
-  return html(renderPortal(documents, notes, entries));
+  return html(renderPortal(documents, notes, entries, updates));
 }
 
 export async function handleBenchEntrustedPost(request, env, url) {
@@ -151,14 +152,14 @@ export async function handleBenchEntrustedPost(request, env, url) {
     const token = await signSession({ gid: grant.id }, env.ENTRUSTED_COOKIE_SECRET, SESSION_TTL_SECONDS);
     return new Response(null, {
       status: 303,
-      headers: { location: `https://darius.life${PREFIX}`, "set-cookie": setCookieHeader(token, SESSION_TTL_SECONDS) },
+      headers: { location: `https://confidential.darius.life${PREFIX}`, "set-cookie": setCookieHeader(token, SESSION_TTL_SECONDS) },
     });
   }
 
   if (path === "logout") {
     return new Response(null, {
       status: 303,
-      headers: { location: `https://darius.life${PREFIX}`, "set-cookie": setCookieHeader("", 0) },
+      headers: { location: `https://confidential.darius.life${PREFIX}`, "set-cookie": setCookieHeader("", 0) },
     });
   }
 
@@ -166,3 +167,4 @@ export async function handleBenchEntrustedPost(request, env, url) {
 }
 
 export const _internal = { renderLogin, renderPortal };
+

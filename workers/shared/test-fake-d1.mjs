@@ -68,6 +68,11 @@ export function createFakeD1() {
     const sql = norm(sqlRaw);
     const args = [...boundArgs];
 
+    // The scoped desk-update view uses joins/JSON membership beyond this
+    // lightweight fake's generic SELECT parser. Real SQLite integration tests
+    // exercise the actual query, grant isolation and withdrawal behavior.
+    if (sql.includes("FROM bench_desk_updates u")) return { results: [], success: true };
+
     let m;
     if ((m = sql.match(/^INSERT(?: OR (REPLACE))? INTO (\w+) \(([^)]+)\) VALUES \(([^)]+)\)$/i))) {
       const [, replace, table, colsRaw] = m;
@@ -159,3 +164,4 @@ export function createFakeD1() {
     },
   };
 }
+

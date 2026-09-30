@@ -53,11 +53,23 @@ function setup(jwk) {
     if (String(url) === `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`) return { ok: true, json: async () => ({ keys: [jwk] }) };
     throw new Error(`unexpected fetch: ${url}`);
   };
-  return { env: { ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2, AI: fakeAI }, fakeD1, fakeR2 };
+  return { env: { BENCH_OWNER_EMAIL: "michael@example.com", ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, ACCESS_AUD: AUD, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2, AI: fakeAI }, fakeD1, fakeR2 };
 }
 
 const authedRequest = (url, token, opts = {}) =>
   new Request(url, { ...opts, headers: { ...(opts.headers || {}), "Cf-Access-Jwt-Assertion": token } });
+
+test("a valid Access identity for another reader cannot manage, share or upload", async () => {
+  const { privateKey, jwk } = await generateKeypair();
+  const token = await signJwt(privateKey, { aud: AUD, email: "guest@example.com", exp: now() + 3600 });
+  const { env, fakeD1 } = setup(jwk);
+  const url = new URL("https://confidential.darius.life/bench/");
+  assert.equal((await handleBenchGet(authedRequest(url, token), env, url)).status, 403);
+  assert.equal((await handleBenchPost(authedRequest(url, token, { method: "POST", body: "title=Secret" }), env, url)).status, 403);
+  const blob = new URL("https://confidential.darius.life/bench/blobs/test-id");
+  assert.equal((await handleBenchPut(authedRequest(blob, token, { method: "PUT", body: "bytes" }), env, blob)).status, 403);
+  assert.equal(fakeD1.tables.cases.length, 0);
+});
 
 // Mirrors exactly what bench-client-script.js's uploadBlob() does: PUT the
 // raw bytes to /bench/blobs/:blobId with Content-Type and X-Filename, then

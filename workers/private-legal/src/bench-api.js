@@ -16,6 +16,7 @@
 // reads, not a second copy anywhere.
 import * as data from "../../shared/bench-data.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
+import { handleBenchDeskApi } from "./bench-desk-api.js";
 
 export const PREFIX = "/bench/api/";
 
@@ -51,7 +52,12 @@ async function caseDetailPayload(db, caseRow) {
 }
 
 export async function handleBenchApi(request, env, url) {
+  if (url.pathname.startsWith(PREFIX + "v2/")) return handleBenchDeskApi(request, env, url);
   if (!requireApiKey(request, env)) return unauthorized();
+
+  // The old database-wide token carries no owner identity, operation scope,
+  // retry record or sharing approval. It cannot remain an alternate write door.
+  if (request.method !== "GET") return json({ error: "legacy_write_disabled", message: "Use the owner-bound scoped Bench Notes connection." }, 410);
 
   const db = env.BENCH_NOTES;
   const path = url.pathname.slice(PREFIX.length);

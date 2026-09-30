@@ -78,3 +78,12 @@ export async function requireAccess(request, env) {
 export const resetCertsCacheForTests = () => {
   certsCache = null;
 };
+
+// Bench Notes has one owner. Being allowed through an Access application
+// does not authorize managing or sharing the owner's docket.
+export async function requireBenchOwner(request, env) {
+  if (!env.BENCH_OWNER_EMAIL) return null;
+  const payload = await requireAccess(request, env);
+  if (!payload || typeof payload.email !== "string" || payload.email.toLowerCase() !== env.BENCH_OWNER_EMAIL.toLowerCase()) return null;
+  return payload;
+}
