@@ -24,6 +24,17 @@ function call(env, path, body, actor = OWNER, key = KEY) {
 const note = { operation_id: "prepare-1", case_id: "case-1", subject: "Hearing date confirmed", change_summary: "The next date is now on the record.", body: "The full update.\n\nNo response is required.", audience_ids: ["grant-a"] };
 async function prepared(env) { const r = await call(env, "updates", note); assert.equal(r.status, 201); return r.json(); }
 const approval = e => ({ operation_id: "share-1", digest: e.digest, approved_subject: e.subject, approved_audience_ids: ["grant-a"], founder_words: "Share this exact note with Reader A." });
+function pauseNextBatch(db) {
+  const original = db.batch.bind(db);
+  let resume, reached, paused = false;
+  const ready = new Promise(resolve => { reached = resolve; });
+  const hold = new Promise(resolve => { resume = resolve; });
+  db.batch = async statements => {
+    if (!paused) { paused = true; reached(); await hold; }
+    return original(statements);
+  };
+  return { ready, resume };
+}
 test("credentials are scoped, owner-bound, expiring and fail closed before any write", async () => {
   const { env, sqlite } = await setup(["cases.read"]);
   assert.equal((await call(env, "updates", note)).status, 403);
@@ -96,10 +107,66 @@ test("audit failure rolls back note and retry ledger together", async () => {
   assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_updates").get().n, 0);
   assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_operations").get().n, 0);
 });
+test("owner can withdraw from remaining readers after original audience access changes", async () => {
+  const { env, sqlite } = await setup();
+  const response = await call(env, "updates", { ...note, audience_ids: ["grant-a", "grant-b"] });
+  assert.equal(response.status, 201);
+  const e = await response.json();
+  const exactApproval = { ...approval(e), approved_audience_ids: ["grant-a", "grant-b"] };
+  assert.equal((await call(env, "updates/" + e.id + "/share", exactApproval)).status, 200);
+  sqlite.prepare("UPDATE access_grants SET revoked_at='now' WHERE id='grant-a'").run();
+  sqlite.prepare("UPDATE access_grants SET label='Renamed reader' WHERE id='grant-b'").run();
+  assert.equal((await listDeskUpdates(env.BENCH_NOTES, ["case-1"], "grant-b")).length, 1);
+  const removal = { ...exactApproval, operation_id: "withdraw-after-revoke", founder_words: "Withdraw this exact note from its original audience." };
+  assert.equal((await call(env, "updates/" + e.id + "/withdraw", { ...removal, digest: "wrong" })).status, 409);
+  const first = await call(env, "updates/" + e.id + "/withdraw", removal);
+  assert.equal(first.status, 200);
+  const receipt = await first.json();
+  assert.equal(receipt.state, "withdrawn");
+  assert.equal((await listDeskUpdates(env.BENCH_NOTES, ["case-1"], "grant-b")).length, 0);
+  const retry = await call(env, "updates/" + e.id + "/withdraw", removal);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(await retry.json(), receipt);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_updates").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_releases").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_withdrawals").get().n, 1);
+});
 test("recipient presentation escapes supplied text and has no tracking or forced response", () => {
   const html = renderDeskUpdates([{ id: "note-1", subject: "<script>alert(1)</script>", sender_name: "<img>", case_label: "Case", change_summary: "A & B", body: "<b>original</b>", shared_at: "2026-09-30T14:00:00.000Z" }]);
   assert.doesNotMatch(html, /<script|<img|<b>/); assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(html, /read.receipt|Mark.*read|Reply|required/);
+});
+test("a concurrent withdrawal prevents a fresh share receipt from claiming availability", async () => {
+  const { env, sqlite } = await setup(); const e = await prepared(env);
+  assert.equal((await call(env, "updates/" + e.id + "/share", approval(e))).status, 200);
+  const gate = pauseNextBatch(env.BENCH_NOTES);
+  const sharing = call(env, "updates/" + e.id + "/share", { ...approval(e), operation_id: "share-racing" });
+  await gate.ready;
+  assert.equal((await call(env, "updates/" + e.id + "/withdraw", { ...approval(e), operation_id: "withdraw-racing", founder_words: "Withdraw this exact note." })).status, 200);
+  gate.resume();
+  const refused = await sharing;
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json()).error, "state_changed");
+  assert.equal((await (await call(env, "updates/" + e.id)).json()).state, "withdrawn");
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_operations WHERE operation_id='share-racing'").get().n, 0);
+});
+test("sharing rechecks audience inside the transaction after request-time validation", async t => {
+  for (const change of ["revoked_at='now'", "case_ids_json='[]'", "label='New reader identity'"]) {
+    await t.test(change, async () => {
+      const { env, sqlite } = await setup(); const e = await prepared(env);
+      const gate = pauseNextBatch(env.BENCH_NOTES);
+      const sharing = call(env, "updates/" + e.id + "/share", approval(e));
+      await gate.ready;
+      sqlite.exec("UPDATE access_grants SET " + change + " WHERE id='grant-a'");
+      gate.resume();
+      const refused = await sharing;
+      assert.equal(refused.status, 409);
+      assert.equal((await refused.json()).error, "audience_changed");
+      assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_releases").get().n, 0);
+      assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_operations WHERE operation_id='share-1'").get().n, 0);
+      assert.equal(sqlite.prepare("SELECT count(*) n FROM bench_desk_audit WHERE action='updates.share'").get().n, 0);
+    });
+  }
 });
 test("legacy write credential no longer provides an alternate sharing door", async () => {
   const { env } = await setup(); const url = new URL("https://darius.life/bench/api/cases/case-1/notes");

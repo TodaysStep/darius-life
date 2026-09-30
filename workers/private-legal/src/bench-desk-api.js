@@ -86,6 +86,8 @@ async function commit(db, p, action, body, digest, writes, payload, target, stat
   } catch (error) {
     const prior = await priorOperation(db, p, body.operation_id, digest);
     if (prior) return prior;
+    if (String(error?.message).includes("desk_share_audience_changed")) refuse(409, "audience_changed", "Reader access changed during this request. Read the current audience before retrying.");
+    if (String(error?.message).includes("desk_share_state_changed")) refuse(409, "state_changed", "The note changed during this request. Read its current state before retrying.");
     // A different operation may have released/withdrawn this same edition.
     if (action === "updates.share" || action === "updates.withdraw") {
       const existing = await first(db, action === "updates.share" ? "SELECT shared_at FROM bench_desk_releases WHERE update_id = ?" : "SELECT withdrawn_at FROM bench_desk_withdrawals WHERE update_id = ?", target);
@@ -171,8 +173,13 @@ export async function handleBenchDeskApi(request, env, url) {
     fields(body, ["operation_id", "digest", "approved_subject", "approved_audience_ids", "founder_words"]);
     const id = path.split("/")[1];
     const edition = await updateRead(db, p, id);
-    const readers = await audience(db, edition.case_id, edition.audience.map(g => g.id));
-    if (JSON.stringify(readers) !== JSON.stringify(edition.audience)) refuse(409, "audience_changed", "Reader details changed. Prepare a new note for review.");
+    // New availability requires the reviewed audience to remain current.
+    // Withdrawal removes availability and must still work after a reader's
+    // access or label changes; its approval remains bound to the original.
+    if (action === "updates.share") {
+      const readers = await audience(db, edition.case_id, edition.audience.map(g => g.id));
+      if (JSON.stringify(readers) !== JSON.stringify(edition.audience)) refuse(409, "audience_changed", "Reader details changed. Prepare a new note for review.");
+    }
     const approvedIds = ids(body.approved_audience_ids, "approved_audience_ids");
     if (body.digest !== edition.digest || body.approved_subject !== edition.subject || JSON.stringify(approvedIds) !== JSON.stringify(edition.audience.map(g => g.id).sort())) refuse(409, "approval_mismatch", "Approval must name this exact note, digest and audience.");
     text(body.founder_words, "founder_words", 2000);

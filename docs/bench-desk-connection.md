@@ -85,8 +85,19 @@ creates a new note. Releases retain their original approval and dates.
 6. Show the complete real note and intended audience; obtain exact approval
    before sharing. Verify owner preview and authorized guest view.
 
-Local checks: 200 Worker tests and 5 adapter tests passed on Node 24.19.0.
+Local checks: 206 Worker tests and 5 adapter tests passed on Node 24.19.0.
 They cover ownership, scoped credentials, real SQLite rollback, repeats,
 guest case/grant isolation, HTML escaping and withdrawal.
+The read-only readiness workflow uses the existing GitHub deployment
+credentials to inspect only the two Workers' binding names and the expected
+D1 database metadata. It prints configured/missing flags, never keys,
+binding values, or case content. Metadata access is not production acceptance.
+
+Sharing is also checked inside its atomic transaction: concurrent reader
+revocation, case-scope or label changes, and withdrawal refuse the new share
+without committing a release, retry receipt or audit. Owner withdrawal
+remains available after original reader access changes, with exact approval
+still bound to the original note and audience.
+
 No full public-site build, live deployment or rendered-browser verification
 is claimed. A Chromium executable was unavailable for local visual QA.
