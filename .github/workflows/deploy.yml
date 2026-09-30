@@ -16,6 +16,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # src/build.mjs reads the last commit date for "Last updated"
+      - name: Require sole-owner configuration before deploying this release
+        env:
+          BENCH_OWNER_EMAIL: ${{ secrets.BENCH_OWNER_EMAIL }}
+          BENCH_DESK_OWNER_ID: ${{ secrets.BENCH_DESK_OWNER_ID }}
+          BENCH_DESK_PRINCIPALS: ${{ secrets.BENCH_DESK_PRINCIPALS }}
+        run: |
+          test -n "$BENCH_OWNER_EMAIL" && test -n "$BENCH_DESK_OWNER_ID" && test -n "$BENCH_DESK_PRINCIPALS" || {
+            echo "::error::Provision the Bench Notes sole-owner identity and scoped credential configuration before deployment. No secrets are printed."
+            exit 1
+          }
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -41,8 +52,29 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
+  bench-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test workers/confidential/src/*.test.mjs workers/private-legal/src/*.test.mjs workers/shared/*.test.mjs
+
+  migrate-bench-desk:
+    needs: [build, bench-contract]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/private-legal
+          command: d1 execute darius-life-bench-notes --remote --file ../shared/schema/bench-desk.sql
+
   deploy-worker:
-    needs: build
+    needs: migrate-bench-desk
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,11 +91,15 @@ jobs:
           # Read and write.
           secrets: |
             GH_COMMIT_TOKEN
+            BENCH_DESK_OWNER_ID
+            BENCH_DESK_PRINCIPALS
         env:
           GH_COMMIT_TOKEN: ${{ secrets.GH_COMMIT_TOKEN }}
+          BENCH_DESK_OWNER_ID: ${{ secrets.BENCH_DESK_OWNER_ID }}
+          BENCH_DESK_PRINCIPALS: ${{ secrets.BENCH_DESK_PRINCIPALS }}
 
   deploy-confidential-worker:
-    needs: build
+    needs: migrate-bench-desk
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,8 +109,10 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/confidential
           command: deploy
-          # No secrets uploaded through the action itself; the entrusted section's
-          # signing key is handled by the step below.
+          secrets: |
+            BENCH_OWNER_EMAIL
+        env:
+          BENCH_OWNER_EMAIL: ${{ secrets.BENCH_OWNER_EMAIL }}
       # The entrusted section (/entrusted/*, "everybody else") signs its session
       # cookie with ENTRUSTED_COOKIE_SECRET. Use the repo secret if one is set;
       # otherwise make sure the Worker has SOME key (generated here, never logged)
@@ -105,3 +143,4 @@ jobs:
           node-version-file: .node-version
       - run: npm ci
       - run: node checks/live.mjs
+

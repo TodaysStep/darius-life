@@ -7,7 +7,7 @@
 // Gated by the pre-existing Cloudflare Access application that already
 // protected confidential.darius.life ("confidential legal area," policy
 // "Allowed readers") — reused as-is; see workers/confidential/wrangler.toml
-// for how its real team domain/AUD were found. requireAccess below is this
+// for how its real team domain/AUD were found. requireBenchOwner below is this
 // module's own independent re-check of the Access JWT, same defense-in-depth
 // pattern as every other gated route in this repo (workers/shared/access.js).
 // This module and bench-entrusted.js (the /entrusted/* section of this same
@@ -33,11 +33,11 @@
 // recording (MediaRecorder) has no non-JS equivalent at all. Both pages
 // declare an explicit script-src 'self' CSP override for exactly that
 // reason — every other page in Bench Notes keeps script-src 'none'.
-import { requireAccess } from "../../shared/access.js";
+import { requireBenchOwner } from "../../shared/access.js";
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
 import * as data from "../../shared/bench-data.js";
-import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
+import { listSharedDocuments, listNotesForCases, listSharedEntries, listDeskUpdates, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
 import { analyzeUploadedDocument } from "../../shared/bench-document-ai.js";
 import { summarizeCase } from "../../shared/bench-case-summary.js";
 import { generatePressureTest } from "../../shared/bench-prep.js";
@@ -1008,7 +1008,7 @@ ${hasAny ? body : `<p class="hint">Nothing matched.</p>`}`);
 // --- Routing ---
 
 export async function handleBenchGet(request, env, url) {
-  const payload = await requireAccess(request, env);
+  const payload = await requireBenchOwner(request, env);
   if (!payload) return forbidden();
 
   const path = url.pathname.slice(PREFIX.length);
@@ -1098,16 +1098,17 @@ export async function handleBenchGet(request, env, url) {
       const grant = await env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE id = ?").bind(previewMatch[1]).first();
       if (!grant || grant.revoked_at) return notFound();
       const caseIds = JSON.parse(grant.case_ids_json || "[]");
-      const [documents, notes, entries] = await Promise.all([
+      const [documents, notes, entries, updates] = await Promise.all([
         listSharedDocuments(env.BENCH_NOTES, caseIds),
         listNotesForCases(env.BENCH_NOTES, caseIds),
         listSharedEntries(env.BENCH_NOTES, caseIds),
+        listDeskUpdates(env.BENCH_NOTES, caseIds, grant.id),
       ]);
       const banner = `<div class="preview-banner"><span>Previewing as: <strong>${escapeHtml(grant.label || grant.id)}</strong> — read-only, no session created</span><a href="${PREFIX}">&larr; Back to your view</a></div>`;
       return html(
         benchPage(
           "Preview — Bench Notes",
-          `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access (preview)</span></h1></header>${renderEntrustedView(documents, notes, entries, { previewBanner: banner, documentHref: documentOwnerHref })}`,
+          `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access (preview)</span></h1></header>${renderEntrustedView(documents, notes, entries, { previewBanner: banner, documentHref: documentOwnerHref, updates })}`,
         ),
       );
     }
@@ -1222,7 +1223,7 @@ export async function handleBenchGet(request, env, url) {
 // same (blobId, filename) pair rather than this route inventing or storing
 // one anywhere.
 export async function handleBenchPut(request, env, url) {
-  const payload = await requireAccess(request, env);
+  const payload = await requireBenchOwner(request, env);
   if (!payload) return forbidden();
 
   const path = url.pathname.slice(PREFIX.length);
@@ -1255,7 +1256,7 @@ export async function handleBenchPut(request, env, url) {
 }
 
 export async function handleBenchPost(request, env, url, ctx) {
-  const payload = await requireAccess(request, env);
+  const payload = await requireBenchOwner(request, env);
   if (!payload) return forbidden();
 
   const path = url.pathname.slice(PREFIX.length);
@@ -1704,3 +1705,4 @@ export async function handleBenchPost(request, env, url, ctx) {
 }
 
 export const _internal = { renderCaseList, renderCaseDetail, errorPage };
+

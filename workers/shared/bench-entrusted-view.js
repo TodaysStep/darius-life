@@ -11,6 +11,36 @@
 // selected here or anywhere else this module can reach.
 import { escapeHtml } from "./bench-style.js";
 
+// New desk notes are scoped to both the named grant and its current case list.
+// No draft, withdrawn note, audience list, credential or working layer is read.
+export async function listDeskUpdates(db, caseIds, grantId) {
+  if (!grantId || !caseIds.length) return [];
+  const placeholders = caseIds.map(() => "?").join(",");
+  const { results } = await db.prepare(
+    `SELECT u.id, u.case_label, u.sender_name, u.subject, u.change_summary, u.body, r.shared_at
+     FROM bench_desk_updates u
+     JOIN bench_desk_releases r ON r.update_id = u.id
+     LEFT JOIN bench_desk_withdrawals w ON w.update_id = u.id
+     WHERE w.update_id IS NULL AND u.case_id IN (${placeholders})
+     AND EXISTS (SELECT 1 FROM json_each(u.audience_json) WHERE json_extract(value, '$.id') = ?)
+     ORDER BY r.shared_at DESC`,
+  ).bind(...caseIds, grantId).all();
+  return results;
+}
+
+export function renderDeskUpdates(updates) {
+  if (!updates.length) return "";
+  const notes = updates.map(n => `<article class="bench-update" id="bench-note-${escapeHtml(n.id)}" aria-labelledby="subject-${escapeHtml(n.id)}">
+<p class="update-eyebrow">A Bench Note for you</p>
+<h2 id="subject-${escapeHtml(n.id)}">${escapeHtml(n.subject)}</h2>
+<p class="update-byline">Shared by <strong>${escapeHtml(n.sender_name)}</strong><br><time datetime="${escapeHtml(n.shared_at)}">${escapeHtml(n.shared_at.replace("T", " ").replace(/\.\d+Z$/, " UTC"))}</time></p>
+<p class="update-case">Regarding ${escapeHtml(n.case_label)}</p>
+<h3>What changed</h3><p class="update-summary">${escapeHtml(n.change_summary)}</p>
+<div class="update-body">${escapeHtml(n.body)}</div>
+</article>`).join("\n");
+  return `<section class="bench-updates" aria-label="Updates shared with you">${notes}</section>`;
+}
+
 export async function listSharedEntries(db, caseIds) {
   if (caseIds.length === 0) return [];
   const placeholders = caseIds.map(() => "?").join(",");
@@ -87,7 +117,7 @@ export function groupsFor(documents, notes, entries) {
 // "upload"); each caller supplies its own, because the working side and the
 // entrusted side serve the same bytes from different, differently-gated
 // routes. Defaults to the raw (pre-upload-support) behavior.
-export function renderEntrustedView(documents, notes, entries, { previewBanner = "", documentHref = (d) => d.storage_ref } = {}) {
+export function renderEntrustedView(documents, notes, entries, { previewBanner = "", documentHref = (d) => d.storage_ref, updates = [] } = {}) {
   const { docGroups, noteGroups, entryGroups, caseLabels } = groupsFor(documents, notes, entries);
 
   const sections = caseLabels.length
@@ -117,5 +147,5 @@ export function renderEntrustedView(documents, notes, entries, { previewBanner =
         .join("\n<div class=\"ticker\"></div>\n")
     : `<p class="hint">Nothing has been shared with you yet.</p>`;
 
-  return `${previewBanner}${sections}`;
+  return `${previewBanner}${renderDeskUpdates(updates)}${sections}`;
 }

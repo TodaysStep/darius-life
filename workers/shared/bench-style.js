@@ -94,6 +94,13 @@ textarea { min-height: 4em; resize: vertical; }
 .note { font-size: 0.88em; margin-top: 1.5em; }
 .error { color: #7A2E1E; font-weight: bold; }
 .upcoming { border-left: 4px solid #7A2E1E; }
+.bench-update { background: #FBF8F0; padding: 1.5em 1.25em; margin: 1.5em 0 2em; border-top: 4px solid #2A2318; border-bottom: 1px solid #2A231855; overflow-wrap: anywhere; }
+.bench-update:target { outline: 2px solid #5B3A29; outline-offset: 4px; }
+.bench-update .update-eyebrow { font-size: 0.72em; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 1em; }
+.bench-update h2 { font-family: Georgia, serif; font-size: 1.55em; line-height: 1.25; text-transform: none; letter-spacing: 0; border: 0; margin: 0 0 0.75em; padding: 0; }
+.update-byline, .update-case { font-size: 0.82em; line-height: 1.6; }
+.update-summary { font-weight: bold; line-height: 1.65; white-space: pre-wrap; }
+.update-body { white-space: pre-wrap; line-height: 1.75; margin-top: 1.3em; }
 /* Every page declares :root { color-scheme: light } above, which should be
  * enough on its own — but a phone or browser that darkens web content
  * regardless (some Android WebViews' "force dark," some in-app browsers)
