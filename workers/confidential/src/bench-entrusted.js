@@ -90,7 +90,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login">
 <label for="passphrase">Enter passphrase</label>
 <input type="password" id="passphrase" name="passphrase" autocomplete="current-password" required autofocus>
-<input type="submit" class="entrusted-submit" value="Open Bench Note →" formmethod="post">
+<input type="submit" class="entrusted-submit" value="Open Bench Note →" formmethod="post" formaction="${PREFIX}${grant.id}/note/${entry.id}/login">
 </form>
 <div class="envelope-seal">Private record · Authorized access only</div>
 </main>`
