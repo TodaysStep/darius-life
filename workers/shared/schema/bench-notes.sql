@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS docket_entries (
   court_takeaways       TEXT,                -- what the court/filing actually said — working-side only
   shared_at             TEXT,                -- null until Darius manually shares this entry —
                                               -- never automatic, same pattern as documents.shared_at
+  share_number          INTEGER UNIQUE,      -- permanent public identity assigned on first share;
+                                              -- never recycled or cleared when access is revoked
   -- note (default, a chronological fact) | hearing | deadline — drives the
   -- "Upcoming" banner on the case list and case page (bench-working.js): any
   -- hearing/deadline entry whose entry_date hasn't passed yet, soonest
