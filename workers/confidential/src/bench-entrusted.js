@@ -100,7 +100,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="Confidential access · darius.life">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">
+<meta property="og:image" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">\n<meta property="og:image:secure_url" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">
 <meta property="og:image:type" content="image/jpeg">\n<meta property="og:image:width" content="447">
 <meta property="og:image:height" content="447">
 <meta property="og:image:alt" content="Stenotype machine on a white field">
@@ -126,7 +126,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 }
 
 // storage_kind "upload" documents are served from this Worker's own R2
-// binding (PRIVATE_LEGAL — the same bucket the working side uses, under
+// binding (BENCH_DOCUMENTS — the same bucket the working side uses, under
 // workers/shared/bench-data.js's benchBlobKey), never from
 // storage_ref directly, which for an upload is an internal R2 key, not a URL.
 function documentGuestHref(d) {
@@ -160,8 +160,20 @@ async function findServableDocument(env, session, docId) {
 export async function handleBenchEntrustedGet(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
 
-  if (path === "stenotype.jpg") {\n    const object = await env.BENCH_DOCUMENTS.get("bench/identity/stenotype-approved.jpg");\n    if (!object) return notFound();\n    return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "public, max-age=31536000, immutable", "x-robots-tag": "noindex, nofollow" } });\n  }\n\n  if (path === "preview.svg") {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="447" height="447" viewBox="0 0 447 447"><rect width="1080" height="1920" fill="white"/><image href="/entrusted/stenotype.jpg?v=20261004-3" x="0" y="0" width="447" height="447" preserveAspectRatio="xMidYMid meet"/></svg>`;
+  if (path === "stenotype.jpg") {
+    const object = await env.BENCH_DOCUMENTS.get("bench/identity/stenotype-approved.jpg");
+    if (!object) return notFound();
+    return new Response(object.body, {
+      headers: {
+        "content-type": "image/jpeg",
+        "cache-control": "public, max-age=31536000, immutable",
+        "x-robots-tag": "noindex, nofollow",
+      },
+    });
+  }
+
+  if (path === "preview.svg") {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="447" height="447" viewBox="0 0 447 447"><rect width="447" height="447" fill="white"/><image href="/entrusted/stenotype.jpg?v=20261004-3" x="0" y="0" width="447" height="447" preserveAspectRatio="xMidYMid meet"/></svg>`;
     return new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400, immutable", "x-robots-tag": "noindex, nofollow" } });
   }
   const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
