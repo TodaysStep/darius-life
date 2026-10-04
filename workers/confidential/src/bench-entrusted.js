@@ -47,7 +47,57 @@ async function findActiveGrantByCodeHash(env, codeHash) {
   return env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE code_hash = ? AND revoked_at IS NULL").bind(codeHash).first();
 }
 
+async function getSharedEntryForGrant(env, grant, entryId) {
+  if (!grant || grant.revoked_at) return null;
+  const caseIds = JSON.parse(grant.case_ids_json || "[]");
+  const entry = await env.BENCH_NOTES.prepare(
+    "SELECT id, case_id, share_number FROM docket_entries WHERE id = ? AND shared_at IS NOT NULL"
+  ).bind(entryId).first();
+  return entry && caseIds.includes(entry.case_id) ? entry : null;
+}
+
+async function getLatestSharedEntryForGrant(env, grant) {
+  if (!grant || grant.revoked_at) return null;
+  const caseIds = JSON.parse(grant.case_ids_json || "[]");
+  if (!caseIds.length) return null;
+  const placeholders = caseIds.map(() => "?").join(",");
+  return env.BENCH_NOTES.prepare(
+    `SELECT id, case_id, share_number FROM docket_entries
+     WHERE shared_at IS NOT NULL AND case_id IN (${placeholders})
+     ORDER BY share_number DESC, created_at DESC LIMIT 1`
+  ).bind(...caseIds).first();
+}
+
 // --- Rendering ---
+
+function noteNumber(n) {
+  return String(n || 0).padStart(3, "0");
+}
+
+function renderEnvelope(grant, entry, error = "") {
+  const label = `Bench Note ${noteNumber(entry.share_number)}`;
+  let page = benchPage(
+    `${label} · Confidential Access`,
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(label)}<span class="tag">Confidential access</span></h1></header>
+<p class="hint">A private Bench Note has been shared with you. Its subject and contents remain confidential until access is granted.</p>
+${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+<form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login">
+<label for="passphrase">Passphrase</label>
+<input type="password" id="passphrase" name="passphrase" required autofocus>
+<button type="submit">Enter confidential area</button>
+</form>`
+  );
+  const title = `${label} · Confidential Access`;
+  const meta = `
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="Confidential access · darius.life">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${escapeHtml(title)}">
+<meta name="twitter:description" content="Confidential access · darius.life">`;
+  page = page.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`);
+  return page.replace("</head>", `${meta}\n</head>`);
+}
 
 function renderLogin(error) {
   return benchPage(
@@ -116,6 +166,34 @@ export async function handleBenchEntrustedGet(request, env, url) {
     });
   }
 
+  const noteLink = path.match(/^([^/]+)(?:\/note\/([^/]+))?$/);
+  if (noteLink) {
+    const grant = await getGrant(env, noteLink[1]);
+    if (!grant || grant.revoked_at) return notFound();
+    const entry = noteLink[2]
+      ? await getSharedEntryForGrant(env, grant, noteLink[2])
+      : await getLatestSharedEntryForGrant(env, grant);
+    if (!entry) return notFound();
+
+    // Legacy grant-only links become durable aliases for the newest shared
+    // note in that grant, so links already handed out continue to work.
+    if (!noteLink[2]) {
+      return Response.redirect(`https://${url.host}${PREFIX}${grant.id}/note/${entry.id}`, 302);
+    }
+
+    const token = readCookie(request, COOKIE_NAME);
+    const session = await verifySession(token, env.ENTRUSTED_COOKIE_SECRET);
+    if (!session || session.gid !== grant.id) return html(renderEnvelope(grant, entry));
+
+    const caseIds = JSON.parse(grant.case_ids_json || "[]");
+    const [documents, notes, entries] = await Promise.all([
+      listSharedDocuments(env.BENCH_NOTES, caseIds),
+      listNotesForCases(env.BENCH_NOTES, caseIds),
+      listSharedEntries(env.BENCH_NOTES, caseIds),
+    ]);
+    return html(renderPortal(documents, notes, entries));
+  }
+
   if (path !== "") return notFound();
 
   const token = readCookie(request, COOKIE_NAME);
@@ -141,6 +219,28 @@ export async function handleBenchEntrustedGet(request, env, url) {
 
 export async function handleBenchEntrustedPost(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
+
+  const noteLogin = path.match(/^([^/]+)\/note\/([^/]+)\/login$/);
+  if (noteLogin) {
+    const grant = await getGrant(env, noteLogin[1]);
+    const entry = await getSharedEntryForGrant(env, grant, noteLogin[2]);
+    if (!grant || !entry) return notFound();
+    const form = await request.formData();
+    const passphrase = form.get("passphrase");
+    if (!passphrase) return html(renderEnvelope(grant, entry, "Enter a passphrase."), 400);
+    const matchedGrant = await findActiveGrantByCodeHash(env, await sha256Hex(passphrase));
+    if (!matchedGrant || matchedGrant.id !== grant.id) {
+      return html(renderEnvelope(grant, entry, "That passphrase isn't recognized."), 401);
+    }
+    const token = await signSession({ gid: grant.id }, env.ENTRUSTED_COOKIE_SECRET, SESSION_TTL_SECONDS);
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: `https://${url.host}${PREFIX}${grant.id}/note/${entry.id}`,
+        "set-cookie": setCookieHeader(token, SESSION_TTL_SECONDS),
+      },
+    });
+  }
 
   if (path === "login") {
     const form = await request.formData();
