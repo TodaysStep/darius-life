@@ -16,12 +16,10 @@ export const headers = (contentType) => ({
 // span of its own (no border/shadow framing it) so the image's own white
 // background blends seamlessly rather than sitting inside a visible box.
 //
-// Always the darius.life-hosted copy (the public static build), by absolute
-// URL, never a relative path: confidential.darius.life is a different
-// Worker with no /assets/* route of its own (a relative path there 404s —
-// this broke the icon there until fixed), and the icon is not part of
-// this Worker's own routes. One file, one place it's served from, referenced
-// the same way from both sections.
+// Served first-party by the confidential Worker from the BENCH_DOCUMENTS
+// R2 binding. The approved image is stored once in R2 and referenced through
+// this stable route so access pages and link previews cannot drift back to
+// an external image host or a stale repository asset.
 export const STENOTYPE_URL = "/entrusted/stenotype.jpg?v=20261004-3";
 
 export const STENOTYPE_ICON = (size = 96) =>
