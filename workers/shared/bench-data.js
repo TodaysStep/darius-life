@@ -155,9 +155,18 @@ export async function updateEntry(db, id, { fact, recommendedDirection, commenta
 }
 
 export async function setEntryShared(db, id, shared) {
-  await db.prepare(
-    `UPDATE docket_entries SET shared_at = ${shared ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : "NULL"} WHERE id = ?`,
-  ).bind(id).run();
+  if (shared) {
+    // A Bench Note number is assigned once, at first publication, and never
+    // recycled. Unsharing removes access without changing the note's identity.
+    await db.prepare(
+      `UPDATE docket_entries
+       SET share_number = COALESCE(share_number, (SELECT COALESCE(MAX(share_number), 0) + 1 FROM docket_entries)),
+           shared_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE id = ?`,
+    ).bind(id).run();
+  } else {
+    await db.prepare("UPDATE docket_entries SET shared_at = NULL WHERE id = ?").bind(id).run();
+  }
 }
 
 // Deleting an entry never deletes a document attached to it — a real PDF
