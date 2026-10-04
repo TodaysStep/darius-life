@@ -160,8 +160,8 @@ async function findServableDocument(env, session, docId) {
 export async function handleBenchEntrustedGet(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
 
-  if (path === "preview.svg") {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920"><rect width="1080" height="1920" fill="white"/><image href="https://darius.life/assets/bench/stenotype.jpg" x="150" y="430" width="780" height="780" preserveAspectRatio="xMidYMid meet"/></svg>`;
+  if (path === "stenotype.jpg") {\n    const object = await env.BENCH_DOCUMENTS.get("bench/identity/stenotype-approved.jpg");\n    if (!object) return notFound();\n    return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "public, max-age=31536000, immutable", "x-robots-tag": "noindex, nofollow" } });\n  }\n\n  if (path === "preview.svg") {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="447" height="447" viewBox="0 0 447 447"><rect width="1080" height="1920" fill="white"/><image href="/entrusted/stenotype.jpg?v=20261004-3" x="0" y="0" width="447" height="447" preserveAspectRatio="xMidYMid meet"/></svg>`;
     return new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400, immutable", "x-robots-tag": "noindex, nofollow" } });
   }
   const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
