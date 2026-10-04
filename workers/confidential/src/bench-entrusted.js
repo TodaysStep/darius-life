@@ -87,9 +87,9 @@ ${STENOTYPE_ICON(260)}
 <hr class="envelope-rule">
 <p class="confidential-copy">A private Bench Note has been shared with you.<br>Its subject and contents remain confidential until access is granted.</p>
 ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
-<form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login">
+<form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login" novalidate>
 <label for="passphrase">Enter passphrase</label>
-<input type="password" id="passphrase" name="passphrase" autocomplete="current-password" required autofocus>
+<input type="password" id="passphrase" name="passphrase" autocomplete="current-password" autofocus>
 <input type="submit" class="entrusted-submit" value="Open Bench Note →" formmethod="post" formaction="${PREFIX}${grant.id}/note/${entry.id}/login">
 </form>
 <div class="envelope-seal">Private record · Authorized access only</div>
