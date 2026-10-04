@@ -90,7 +90,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login">
 <label for="passphrase">Enter passphrase</label>
 <input type="password" id="passphrase" name="passphrase" autocomplete="current-password" required autofocus>
-<button type="submit">Open Bench Note</button>
+<input type="submit" class="entrusted-submit" value="Open Bench Note →" formmethod="post">
 </form>
 <div class="envelope-seal">Private record · Authorized access only</div>
 </main>`
@@ -100,14 +100,14 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="Confidential access · darius.life">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://confidential.darius.life/entrusted/preview.svg">
-<meta property="og:image:width" content="1080">
-<meta property="og:image:height" content="1920">
+<meta property="og:image" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">
+<meta property="og:image:type" content="image/jpeg">\n<meta property="og:image:width" content="447">
+<meta property="og:image:height" content="447">
 <meta property="og:image:alt" content="Stenotype machine on a white field">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeHtml(title)}">
 <meta name="twitter:description" content="Confidential access · darius.life">
-<meta name="twitter:image" content="https://confidential.darius.life/entrusted/preview.svg">`;
+<meta name="twitter:image" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">`;
   page = page.replace(/<title>[^<]*<\\/title>/, `<title>${escapeHtml(title)}</title>`);
   return page.replace("</head>", `${meta}\n</head>`);
 }
@@ -171,7 +171,7 @@ export async function handleBenchEntrustedGet(request, env, url) {
     if (!session) return notFound();
     const doc = await findServableDocument(env, session, fileMatch[1]);
     if (!doc || doc.storage_kind !== "upload") return notFound();
-    const object = await env.PRIVATE_LEGAL.get(doc.storage_ref);
+    const object = await env.BENCH_DOCUMENTS.get(doc.storage_ref);
     if (!object) return notFound();
     return new Response(object.body, {
       headers: {
