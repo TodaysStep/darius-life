@@ -22,7 +22,7 @@ export const headers = (contentType) => ({
 // this broke the icon there until fixed), and the icon is not part of
 // this Worker's own routes. One file, one place it's served from, referenced
 // the same way from both sections.
-export const STENOTYPE_URL = "https://s16home.com/cdn/shop/files/antique-stenograph-carrying-case-circa-1920-1930-5_d96295e7-736b-442f-be0a-acc702f45d79.jpg?v=1691020716";
+export const STENOTYPE_URL = "/entrusted/stenotype.jpg?v=20261004-3";
 
 export const STENOTYPE_ICON = (size = 96) =>
   `<span class="steno-icon" style="width:${size}px;height:${size}px"><img src="${STENOTYPE_URL}" alt="Stenotype machine" width="${size}" height="${size}"></span>`;
@@ -132,7 +132,7 @@ textarea { min-height: 4em; resize: vertical; }
   letter-spacing:.08em; outline:none;
 }
 .envelope input[type="password"]:focus { border-color:#111; box-shadow:0 0 0 1px #111; }
-.envelope button {
+.envelope button, .envelope input[type="submit"] {
   width:100%; padding:1.05rem 1.1rem; border:1px solid #a88642; border-radius:.2rem;
   background:#161616; color:#fff; font-family:ui-monospace,"SF Mono",Menlo,monospace;
   font-size:.76rem; font-weight:500; letter-spacing:.22em; text-transform:uppercase;
@@ -193,7 +193,7 @@ textarea { min-height: 4em; resize: vertical; }
 // img-src explicitly allows https://darius.life — the icon is always hosted
 // there (see STENOTYPE_URL above), including on pages served from the
 // different confidential.darius.life origin.
-export const benchPage = (title, body, { csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://darius.life https://s16home.com; script-src 'none'" } = {}) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
+export const benchPage = (title, body, { csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; script-src 'none'" } = {}) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
