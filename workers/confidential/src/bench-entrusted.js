@@ -75,30 +75,42 @@ function noteNumber(n) {
 }
 
 function renderEnvelope(grant, entry, error = "") {
-  const label = `Bench Note ${noteNumber(entry.share_number)}`;
+  const number = noteNumber(entry.share_number);
+  const label = `Bench Note ${number}`;
   let page = benchPage(
     `${label} · Confidential Access`,
-    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${escapeHtml(label)}<span class="tag">Confidential access</span></h1></header>
-<p class="hint">A private Bench Note has been shared with you. Its subject and contents remain confidential until access is granted.</p>
+    `<main class="envelope">
+${STENOTYPE_ICON(260)}
+<div class="envelope-kicker"><span>Court record</span><span>Confidential access</span></div>
+<h1>Bench Note<span class="note-no">${number}</span></h1>
+<div class="access-mark">Confidential Access</div>
+<hr class="envelope-rule">
+<p class="confidential-copy">A private Bench Note has been shared with you.<br>Its subject and contents remain confidential until access is granted.</p>
 ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <form method="post" action="${PREFIX}${grant.id}/note/${entry.id}/login">
-<label for="passphrase">Passphrase</label>
-<input type="password" id="passphrase" name="passphrase" required autofocus>
-<button type="submit">Enter confidential area</button>
-</form>`
+<label for="passphrase">Enter passphrase</label>
+<input type="password" id="passphrase" name="passphrase" autocomplete="current-password" required autofocus>
+<button type="submit">Open Bench Note</button>
+</form>
+<div class="envelope-seal">Private record · Authorized access only</div>
+</main>`
   );
   const title = `${label} · Confidential Access`;
   const meta = `
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="Confidential access · darius.life">
 <meta property="og:type" content="website">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://confidential.darius.life/entrusted/preview.svg">
+<meta property="og:image:width" content="1080">
+<meta property="og:image:height" content="1920">
+<meta property="og:image:alt" content="Stenotype machine on a white field">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeHtml(title)}">
-<meta name="twitter:description" content="Confidential access · darius.life">`;
-  page = page.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`);
+<meta name="twitter:description" content="Confidential access · darius.life">
+<meta name="twitter:image" content="https://confidential.darius.life/entrusted/preview.svg">`;
+  page = page.replace(/<title>[^<]*<\\/title>/, `<title>${escapeHtml(title)}</title>`);
   return page.replace("</head>", `${meta}\n</head>`);
 }
-
 function renderLogin(error) {
   return benchPage(
     "Bench Notes — Entrusted access",
@@ -148,6 +160,10 @@ async function findServableDocument(env, session, docId) {
 export async function handleBenchEntrustedGet(request, env, url) {
   const path = url.pathname.slice(PREFIX.length);
 
+  if (path === "preview.svg") {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920"><rect width="1080" height="1920" fill="white"/><image href="https://darius.life/assets/bench/stenotype.jpg" x="150" y="430" width="780" height="780" preserveAspectRatio="xMidYMid meet"/></svg>`;
+    return new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400, immutable", "x-robots-tag": "noindex, nofollow" } });
+  }
   const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
   if (fileMatch) {
     const token = readCookie(request, COOKIE_NAME);
