@@ -94,6 +94,62 @@ textarea { min-height: 4em; resize: vertical; }
 .note { font-size: 0.88em; margin-top: 1.5em; }
 .error { color: #7A2E1E; font-weight: bold; }
 .upcoming { border-left: 4px solid #7A2E1E; }
+
+/* Entrusted Bench Note envelope — deliberately white, typeset, and spare.
+ * This is a court-record access surface, not the working Bench UI. */
+.envelope {
+  max-width: 34rem; margin: 0 auto; padding: 3.2rem 1.25rem 4rem;
+  text-align: center; background: #fff; color: #111;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.envelope .steno-icon { width: 260px !important; height: 210px !important; margin: 0 auto 2rem; background:#fff; }
+.envelope .steno-icon img { object-fit: contain; }
+.envelope-kicker {
+  display:flex; align-items:center; justify-content:center; gap:.9rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size:.66rem;
+  letter-spacing:.24em; text-transform:uppercase; color:#8a6b2d;
+}
+.envelope-kicker::before,.envelope-kicker::after { content:""; width:4.5rem; height:1px; background:#d8c9a8; }
+.envelope h1 {
+  margin:1.5rem 0 0; font-size:clamp(2.55rem,10vw,4.7rem); line-height:.9;
+  font-weight:500; letter-spacing:.055em; text-transform:uppercase;
+}
+.envelope .note-no { display:block; margin:.35rem 0 0; color:#9a7835; font-size:.78em; letter-spacing:.12em; }
+.envelope .access-mark {
+  margin:1.15rem 0 1.9rem; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size:.72rem; letter-spacing:.32em; text-transform:uppercase;
+}
+.envelope-rule { width:54%; border:0; border-top:1px solid #d8c9a8; margin:0 auto 1.8rem; }
+.envelope .confidential-copy { max-width:29rem; margin:0 auto 2.1rem; font-size:1.06rem; line-height:1.55; }
+.envelope form { text-align:left; }
+.envelope label {
+  margin:0 0 .55rem; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.66rem;
+  letter-spacing:.22em; text-transform:uppercase; color:#6f675b;
+}
+.envelope input[type="password"] {
+  margin:0 0 .75rem; padding:1.05rem 1.1rem; border:1px solid #a88642; border-radius:.2rem;
+  background:#fff; color:#111; font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  letter-spacing:.08em; outline:none;
+}
+.envelope input[type="password"]:focus { border-color:#111; box-shadow:0 0 0 1px #111; }
+.envelope button {
+  width:100%; padding:1.05rem 1.1rem; border:1px solid #a88642; border-radius:.2rem;
+  background:#161616; color:#fff; font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:.76rem; font-weight:500; letter-spacing:.22em; text-transform:uppercase;
+}
+.envelope button::after { content:"  →"; }
+.envelope .error { text-align:left; margin:.7rem 0 1rem; }
+.envelope-seal {
+  margin-top:1.5rem; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.58rem;
+  letter-spacing:.18em; text-transform:uppercase; color:#8b8377;
+}
+@media (max-width:520px) {
+  .page:has(.envelope) { padding:0; max-width:none; }
+  .envelope { padding-top:2.1rem; min-height:100vh; box-sizing:border-box; }
+  .envelope .steno-icon { width:220px !important; height:175px !important; }
+  .envelope-kicker::before,.envelope-kicker::after { width:2rem; }
+}
+
 /* Every page declares :root { color-scheme: light } above, which should be
  * enough on its own — but a phone or browser that darkens web content
  * regardless (some Android WebViews' "force dark," some in-app browsers)
