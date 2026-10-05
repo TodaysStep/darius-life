@@ -25,10 +25,9 @@ export default {
     if (!accepted.id || accepted.state === 'quarantined') return;
     const automated=message.headers.get('Auto-Submitted');
     if(!automated || automated.toLowerCase()==='no') await queueEvidenceReceipt(env,accepted.id);
-    ctx.waitUntil((async()=>{
-      await runEvidenceJobs(env,{limit:1});
-      await runEvidenceReceipts(env,{limit:2});
-    })());
+    // OCR belongs to the scheduled lease/checkpoint worker, not the email
+    // event's shorter background lifetime. Original MIME is already durable.
+    ctx.waitUntil(runEvidenceReceipts(env,{limit:2}));
   },
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async()=>{

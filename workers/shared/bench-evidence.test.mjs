@@ -158,3 +158,23 @@ test('exhausted job updates receipt processing to needs review',async()=>{
  const {env,sql}=setup();const accepted=await acceptEvidenceEmail(message(email()),env);env.AI.run=async()=>{throw new Error('provider unavailable');};
  sql.exec('UPDATE evidence_jobs SET attempts=4');await runEvidenceJobs(env);const record=await getEvidence(env,accepted.id);assert.equal(record.intake.state,'needs_review');assert.equal(JSON.parse(record.intake.receipt_json).processing,'needs_review');
 });
+test('truncated PDF OCR remains searchable partial evidence requiring review',async()=>{
+ const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.create();const image=await pdf.embedPng(await evidenceImagePNG({width:3,height:3,channels:3,data:new Uint8Array(27).fill(255)}));pdf.addPage().drawImage(image);
+ const {env}=setup();env.AI.run=async model=>model.includes('mistral-small')?({choices:[{message:{content:'Exact preserved partial statement'},finish_reason:'length'}]}):({response:{claims:[]}});
+ const raw=email('truncated scan',Buffer.from(await pdf.save()).toString('base64')).replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: application/pdf\r\nContent-Disposition');
+ const accepted=await acceptEvidenceEmail(message(raw),env);await runEvidenceJobs(env);const record=await getEvidence(env,accepted.id);
+ assert.equal(record.parts[0].state,'needs_review_pdf_pages');assert.equal(record.pdf_pages[0].error_code,'ocr_truncated');assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,true);assert.match(record.derivations[0].text_content,/Exact preserved partial statement/);assert.equal((await listEvidence(env,{q:'Exact preserved partial statement'})).length,1);
+});
+test('short native footer does not suppress substantial scanned page content',async()=>{
+ const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.create();const image=await pdf.embedPng(await evidenceImagePNG({width:500,height:500,channels:1,data:new Uint8Array(250000).fill(255)}));const page=pdf.addPage();page.drawImage(image);page.drawText('Page 1');
+ const {env}=setup();let calls=0;env.AI.run=async model=>model.includes('mistral-small')?({response:'Actual scanned body',usage:{completion_tokens:++calls}}):({response:{claims:[]}});
+ const raw=email('hybrid scan',Buffer.from(await pdf.save()).toString('base64')).replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: application/pdf\r\nContent-Disposition');
+ const accepted=await acceptEvidenceEmail(message(raw),env);await runEvidenceJobs(env);const record=await getEvidence(env,accepted.id);
+ assert.equal(calls,1);assert.match(record.derivations[0].text_content,/\[Native text\][\s\S]*Page 1/);assert.match(record.derivations[0].text_content,/\[OCR-derived text\][\s\S]*Actual scanned body/);
+});
+test('image OCR output token ceiling stays review-required across duplicate artifact reuse',async()=>{
+ const {env,sql}=setup();env.AI.run=async model=>model.includes('mistral-small')?({response:'Preserved image fragment',usage:{completion_tokens:3000}}):({response:{claims:[]}});
+ const raw=email('image truncation').replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: image/png\r\nContent-Disposition');const accepted=await acceptEvidenceEmail(message(raw),env);await runEvidenceJobs(env);let record=await getEvidence(env,accepted.id);
+ assert.equal(record.parts[0].state,'needs_review_ocr_truncated');assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,true);
+ const other=await acceptEvidenceEmail(message(raw.replace('image truncation','another occurrence')),env);await runEvidenceJobs(env);record=await getEvidence(env,other.id);assert.equal(record.parts[0].state,'needs_review_ocr_truncated');
+});
