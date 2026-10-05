@@ -9,7 +9,7 @@ const ORIGIN='https://confidential.darius.life';
 const HASH='a'.repeat(64), EMAIL='b'.repeat(64), OTHER='c'.repeat(64);
 async function fixture() {
  const db=new DatabaseSync(':memory:');
- for (const name of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql']) db.exec(readFileSync(new URL('../../shared/schema/'+name,import.meta.url),'utf8'));
+ for (const name of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql','bench-evidence-pdf-pages.sql']) db.exec(readFileSync(new URL('../../shared/schema/'+name,import.meta.url),'utf8'));
  db.exec(`INSERT INTO cases(id,title) VALUES('case-1','One'),('case-2','Two');
  INSERT INTO access_grants(id,code_hash,case_ids_json) VALUES('grant-1','hash','["case-1"]'),('grant-2','hash2','["case-2"]');
  INSERT INTO docket_entries(id,case_id,case_label,entry_date,fact,shared_at,share_number) VALUES('note-1','case-1','Case one','2026-10-05','TARGET NOTE','t',2),('note-2','case-1','Case one','2026-10-05','UNRELATED NOTE','t',3);

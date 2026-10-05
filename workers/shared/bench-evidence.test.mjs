@@ -2,9 +2,9 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acceptEvidenceEmail,runEvidenceJobs,getEvidence,listEvidence,evidenceHash,validateEvidenceContext,intakeAuthentication,parseModelJSON,evidenceImagePNG,semanticEvidenceSearch} from './bench-evidence.js';
+import {acceptEvidenceEmail,runEvidenceJobs,getEvidence,listEvidence,evidenceHash,validateEvidenceContext,intakeAuthentication,parseModelJSON,evidenceImagePNG,semanticEvidenceSearch,boundedScanRaster,extractPageScanRasters} from './bench-evidence.js';
 function setup(){
- const sql=new DatabaseSync(':memory:');sql.exec(readFileSync(new URL('./schema/bench-evidence.sql',import.meta.url),'utf8'));sql.exec('CREATE TABLE cases(id TEXT,case_number TEXT); INSERT INTO cases VALUES(\'test-case\',\'26FDV03796S\')');
+ const sql=new DatabaseSync(':memory:');sql.exec(readFileSync(new URL('./schema/bench-evidence.sql',import.meta.url),'utf8'));sql.exec(readFileSync(new URL('./schema/bench-evidence-pdf-pages.sql',import.meta.url),'utf8'));sql.exec('CREATE TABLE cases(id TEXT,case_number TEXT); INSERT INTO cases VALUES(\'test-case\',\'26FDV03796S\')');
  const objects=new Map();
  const env={AI:{run:async()=>({response:{claims:[]}})},BENCH_INTAKE_SENDERS:'owner@example.com',BENCH_NOTES:{prepare(query){return {bind(...args){const s=sql.prepare(query);return {run:async()=>({meta:{changes:Number(s.run(...args).changes)}}),first:async()=>s.get(...args)||null,all:async()=>({results:s.all(...args)})};}}}},BENCH_DOCUMENTS:{head:async k=>objects.has(k)?{size:objects.get(k).byteLength}:null,put:async(k,b)=>{if(!objects.has(k))objects.set(k,b.slice(0));},get:async k=>objects.has(k)?{arrayBuffer:async()=>objects.get(k).slice(0)}:null}};
  env.BENCH_NOTES.batch=async statements=>{sql.exec('BEGIN');try{const results=[];for(const statement of statements)results.push(await statement.run());sql.exec('COMMIT');return results;}catch(e){sql.exec('ROLLBACK');throw e;}};
@@ -90,7 +90,7 @@ test('blank PDF cannot become a processed OCR record from provider metadata',asy
  const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.create();pdf.addPage();
  const {env}=setup();env.AI.toMarkdown=async()=>[{format:'markdown',data:'## Metadata\n### Page 1'}];
  const accepted=await acceptEvidenceEmail(message(email('blank',Buffer.from(await pdf.save()).toString('base64')).replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: application/pdf\r\nContent-Disposition')),env);await runEvidenceJobs(env);
- const record=await getEvidence(env,accepted.id);assert.equal(record.derivations.length,0);assert.equal(record.parts[0].state,'processing_failed');
+ const record=await getEvidence(env,accepted.id);assert.equal(record.derivations.length,0);assert.equal(record.parts[0].state,'needs_review_pdf_pages');
 });
 test('reprocessing repairs outdated derivation while retaining history and acknowledgment',async()=>{
  const {env,sql}=setup();const accepted=await acceptEvidenceEmail(message(email()),env);await runEvidenceJobs(env);
@@ -139,4 +139,22 @@ test('self-identified synthetic fixtures cannot contradict the real docket',()=>
  ];
  const result=validateEvidenceContext({claims:[{type:'possible_contradiction',value:'Court matter involvement differs',shared_subject:'26FDV03796S',citations:[{source_id:'new',quote:sources[0].text},{source_id:'old',quote:sources[1].text}]}]},sources);
  assert.equal(result.claims.length,0);assert.equal(result.test_evidence_detected,true);assert.equal(result.evidence_classification,'source_declares_synthetic_test_evidence');
+});
+test('packed one-bit scan decodes row padding and bounds high-resolution raster',()=>{
+ const small=boundedScanRaster({width:9,height:2,kind:1,data:new Uint8Array([255,128,0,0])});
+ assert.equal(small.channels,1);assert.deepEqual([...small.data.slice(0,9)],Array(9).fill(255));assert.deepEqual([...small.data.slice(9)],Array(9).fill(0));
+ const large=boundedScanRaster({width:3392,height:4406,kind:1,data:new Uint8Array(Math.ceil(3392/8)*4406).fill(255)});
+ assert.equal(large.height,2000);assert.ok(large.width<=2000);assert.equal(large.data.length,large.width*large.height);
+});
+test('PDF page checkpoints survive bounded continuation and preserve partial text',async()=>{
+ const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.create();const png=await evidenceImagePNG({width:3,height:3,channels:3,data:new Uint8Array(27).fill(255)});const image=await pdf.embedPng(png);for(let p=0;p<3;p++)pdf.addPage().drawImage(image);
+ const {env,sql}=setup();let ocrCalls=0;env.AI.run=async model=>model.includes('mistral-small')?({response:`OCR page ${++ocrCalls}`}):({response:{claims:[]}});
+ const raw=email('checkpoint',Buffer.from(await pdf.save()).toString('base64')).replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: application/pdf\r\nContent-Disposition');
+ const accepted=await acceptEvidenceEmail(message(raw),env);await runEvidenceJobs(env);
+ let record=await getEvidence(env,accepted.id);assert.equal(record.intake.state,'processing');assert.equal(ocrCalls,2);assert.equal(record.pdf_pages.filter(p=>p.state==='processed').length,2);assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,true);assert.equal(JSON.parse(record.intake.receipt_json).attachments_preserved,2);
+ sql.exec("UPDATE evidence_jobs SET available_at='2000-01-01'");await runEvidenceJobs(env);record=await getEvidence(env,accepted.id);assert.equal(ocrCalls,3);assert.equal(record.pdf_pages.filter(p=>p.state==='processed').length,3);assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,false);assert.equal(sql.prepare('SELECT attempts FROM evidence_jobs').get().attempts,1);
+});
+test('exhausted job updates receipt processing to needs review',async()=>{
+ const {env,sql}=setup();const accepted=await acceptEvidenceEmail(message(email()),env);env.AI.run=async()=>{throw new Error('provider unavailable');};
+ sql.exec('UPDATE evidence_jobs SET attempts=4');await runEvidenceJobs(env);const record=await getEvidence(env,accepted.id);assert.equal(record.intake.state,'needs_review');assert.equal(JSON.parse(record.intake.receipt_json).processing,'needs_review');
 });

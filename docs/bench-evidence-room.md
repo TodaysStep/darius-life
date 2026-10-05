@@ -22,7 +22,7 @@ Normal operation uses an iPhone Mail forward. The receipt links to the private e
 
 ## Operations
 
-Apply `workers/shared/schema/bench-evidence.sql`, `bench-evidence-sharing.sql`, and `bench-evidence-receipts.sql` as additive D1 migrations. Existing tables and records are retained. Preserve existing Worker secrets and bindings when deploying. Configure `BENCH_INTAKE_SENDERS` and a random `BENCH_RETRIEVAL_KEY`; never commit their values. The bridge credential is server-side only.
+Apply `workers/shared/schema/bench-evidence.sql`, `bench-evidence-sharing.sql`, `bench-evidence-receipts.sql`, and `bench-evidence-pdf-pages.sql` as additive D1 migrations. Existing tables and records are retained. Preserve existing Worker secrets and bindings when deploying. Configure `BENCH_INTAKE_SENDERS` and a random `BENCH_RETRIEVAL_KEY`; never commit their values. The bridge credential is server-side only.
 
 A two-minute scheduled handler leases due D1 jobs. Jobs retry with bounded exponential backoff and become visibly reviewable after exhaustion. Inspect `evidence_jobs`, `evidence_intakes.receipt_json`, part states and context history. Review failures without replacing original objects. Reprocessing must append new derivations when the processor version changes.
 
@@ -41,3 +41,5 @@ An unavailable recording or transcript must be documented as missing, not recons
 Semantic retrieval ranks bounded current source passages and returns only validated quotations with source IDs. It discloses coverage and failures; it is not a claim of exhaustive review. An existing authored note remains a separate record from an evidence intake.
 
 Scanned PDFs use page image extraction and vision OCR; metadata alone is never a successful extraction. Automatic transcripts are labeled, retain available timestamps, and do not invent speakers. Unsupported raster/layout cases remain reviewable.
+
+PDF OCR checkpoints each page in `evidence_pdf_pages`. Packed one-bit scans are decoded and downsampled into a bounded derived raster; original PDF bytes never change. Each job pass limits OCR pages, saves partial searchable text with explicit missing-page states, and schedules continuation without spending the failure retry budget. Blank or unreadable pages remain reviewable.

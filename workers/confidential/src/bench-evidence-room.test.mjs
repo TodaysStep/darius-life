@@ -14,7 +14,7 @@ async function fixture(t){
  const token=data+'.'+Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',key.privateKey,new TextEncoder().encode(data))).toString('base64url');
  const previous=globalThis.fetch;globalThis.fetch=async()=>({ok:true,json:async()=>({keys:[jwk]})});t.after(()=>{globalThis.fetch=previous;resetCertsCacheForTests();});
  const db=new DatabaseSync(':memory:');
- for(const file of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql','bench-evidence-receipts.sql'])db.exec(readFileSync(new URL('../../shared/schema/'+file,import.meta.url),'utf8'));
+ for(const file of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql','bench-evidence-pdf-pages.sql','bench-evidence-receipts.sql'])db.exec(readFileSync(new URL('../../shared/schema/'+file,import.meta.url),'utf8'));
  db.exec(`INSERT INTO cases(id,title) VALUES('case','Test');
  INSERT INTO docket_entries(id,case_id,case_label,entry_date,fact,shared_at,share_number) VALUES('note','case','Test case','2026-10-05','Existing authored note','t',2),('private-note','case','Test case','2026-10-05','Private note',NULL,NULL);
  INSERT INTO evidence_intakes(id,source_sha256,original_artifact_id,state,received_at,updated_at,subject) VALUES('intake','${HASH}','${HASH}','needs_review','t','t','Private subject');
