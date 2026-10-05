@@ -36,7 +36,7 @@ projects.dreamstep-press, projects.li-press, projects.hands-on, projects.honest-
 projects.songsketch, projects.napkinsketch, projects.business-studio, projects.todays-step,
 projects.founder-notes, projects.dreamstep-education, projects.dreamstep-engineering,
 projects.lox, projects.posterity-cloud, projects.founding-record,
-help.blurb, help.priority, help.priority, help.housing, help.groceries, help.meal, help.ride, help.essentials, help.meals-on-wheels, help.work-dreamstep, help.work-smallstep, help.resources, help.other, help.lodging, help.connectivity, help.everyday, help.mail, help.storage, help.workspace, help.professional, help.housing-lead, help.introduction, help.hire, help.sponsor-dreamstep, help.direct-support, help.professional-expenses, help.hour, help.share, help.unsure, help.lodging, help.connectivity, help.everyday, help.mail, help.storage, help.workspace, help.professional, help.housing-lead, help.introduction, help.hire, help.sponsor-dreamstep, help.direct-support, help.professional-expenses, help.hour, help.share, help.unsure, help.founders-letter,
+help.blurb, help.priority, help.housing, help.groceries, help.meal, help.ride, help.essentials, help.meals-on-wheels, help.work-dreamstep, help.work-smallstep, help.resources, help.other, help.lodging, help.connectivity, help.everyday, help.mail, help.storage, help.workspace, help.professional, help.housing-lead, help.introduction, help.hire, help.sponsor-dreamstep, help.direct-support, help.professional-expenses, help.hour, help.share, help.unsure, help.founders-letter,
 writing.blurb, writing.thesis, writing.dreamstep, writing.educators-exile-1,
 writing.todays-step-archive,
 footer.press, footer.updated, footer.copyright`
