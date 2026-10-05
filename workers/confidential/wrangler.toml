@@ -20,6 +20,9 @@ name = "darius-life-confidential"
 main = "src/index.js"
 compatibility_date = "2026-09-28"
 
+[triggers]
+crons = ["*/2 * * * *"]
+
 [[routes]]
 pattern = "confidential.darius.life"
 custom_domain = true
@@ -47,3 +50,8 @@ binding = "AI"
 [vars]
 ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
 ACCESS_AUD = "64ae3dd22643411542618705ef6b6d3dd0b034bf3f990ece171ed006bbdb388c"
+
+# Receipt recipients are additionally checked against BENCH_INTAKE_SENDERS at runtime.
+[[send_email]]
+name = "BENCH_RECEIPTS"
+allowed_sender_addresses = ["bench@intake.darius.life"]

@@ -14,10 +14,32 @@
 //                not this whole hostname/Worker (see docs/cloudflare-setup.md).
 import { PREFIX as ENTRUSTED_PREFIX, handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
 import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
+import { handleEvidenceRoom } from './bench-evidence-room.js';
+import { handleEvidenceApi } from './bench-evidence-api.js';
+import { acceptEvidenceEmail, runEvidenceJobs } from '../../shared/bench-evidence.js';
+import { queueEvidenceReceipt, runEvidenceReceipts } from '../../shared/bench-evidence-receipts.js';
 
 export default {
+  async email(message, env, ctx) {
+    const accepted = await acceptEvidenceEmail(message, env);
+    if (!accepted.id || accepted.state === 'quarantined') return;
+    const automated=message.headers.get('Auto-Submitted');
+    if(!automated || automated.toLowerCase()==='no') await queueEvidenceReceipt(env,accepted.id);
+    ctx.waitUntil((async()=>{
+      await runEvidenceJobs(env,{limit:1});
+      await runEvidenceReceipts(env,{limit:2});
+    })());
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async()=>{
+      await runEvidenceJobs(env,{limit:2});
+      await runEvidenceReceipts(env,{limit:2});
+    })());
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/evidence-api/')) return handleEvidenceApi(request, env, url);
+    if (url.pathname === '/bench/evidence' || url.pathname.startsWith('/bench/evidence/')) return handleEvidenceRoom(request, env, url);
 
     // Cloudflare Access sends a browser back to exactly the path it first
     // tried, after login — so visiting the bare hostname with no path at

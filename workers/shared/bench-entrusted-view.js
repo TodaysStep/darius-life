@@ -10,6 +10,7 @@
 // commentary, court_takeaways, patterns, and glossary_terms are never
 // selected here or anywhere else this module can reach.
 import { escapeHtml } from "./bench-style.js";
+import { renderEvidenceText } from "./bench-rich-text.js";
 
 export async function listSharedEntries(db, caseIds) {
   if (caseIds.length === 0) return [];
@@ -67,7 +68,7 @@ function renderDocLink(d, documentHref) {
 function renderEntry(entry, attachedDocs, documentHref) {
   return `<div class="card">
 <span class="entry-date">${escapeHtml(entry.entry_date)}</span>
-<div class="entry-layer">${escapeHtml(entry.fact)}</div>
+<div class="entry-layer">${renderEvidenceText(entry.fact)}</div>
 ${attachedDocs.length ? attachedDocs.map((d) => renderDocLink(d, documentHref)).join("\n") : ""}
 </div>`;
 }
@@ -110,7 +111,7 @@ export function renderEntrustedView(documents, notes, entries, { previewBanner =
           const docRows = generalDocs.length
             ? generalDocs.map((d) => renderDocLink(d, documentHref)).join("\n")
             : `<p class="hint">No general documents shared yet.</p>`;
-          const noteRows = theseNotes.map((n) => `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span><div>${escapeHtml(n.body)}</div></div>`).join("\n");
+          const noteRows = theseNotes.map((n) => `<div class="card"><span class="entry-date">${escapeHtml(n.created_at)}</span>${renderEvidenceText(n.body)}</div>`).join("\n");
 
           return `<h2>${escapeHtml(label)}</h2>\n<h3>Timeline</h3>\n${timeline}\n<h3>Documents</h3>\n${docRows}\n${noteRows}`;
         })

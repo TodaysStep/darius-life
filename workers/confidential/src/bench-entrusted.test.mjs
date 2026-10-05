@@ -10,7 +10,7 @@ const SECRET = "test-entrusted-secret";
 function setup() {
   const fakeD1 = createFakeD1();
   const fakeR2 = createFakeR2();
-  return { env: { ENTRUSTED_COOKIE_SECRET: SECRET, BENCH_NOTES: fakeD1.BENCH_NOTES, PRIVATE_LEGAL: fakeR2 }, fakeD1, fakeR2 };
+  return { env: { ENTRUSTED_COOKIE_SECRET: SECRET, BENCH_NOTES: fakeD1.BENCH_NOTES, BENCH_DOCUMENTS: fakeR2 }, fakeD1, fakeR2 };
 }
 
 async function loginAndGetCookie(env, passphrase) {
@@ -179,23 +179,26 @@ test("a real guest session shows a shared entry's fact but never its private lay
 });
 
 // The guest section shares a Worker with Darius's own docket, so its isolation is
-// this module's own discipline: it may import only the shared view/crypto/style
-// modules — never the working side or its data helpers — and its only direct SQL
-// is against access_grants. Everything a guest sees comes through
-// listSharedEntries/listSharedDocuments/listNotesForCases in bench-entrusted-view.js.
+// this module's discipline: imports remain explicit and private docket layers
+// are excluded from every direct SQL query. New evidence uses separate records
+// only after the active grant and explicitly shared intake link are checked.
 test("the entrusted module stays structurally separate from the working side", async () => {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("./bench-entrusted.js", import.meta.url), "utf8");
   const imports = [...src.matchAll(/^import\s.*?from\s+"([^"]+)";/gms)].map((m) => m[1]);
   assert.deepEqual(
     imports.sort(),
-    ["../../shared/bench-crypto.js", "../../shared/bench-entrusted-view.js", "../../shared/bench-style.js"],
-    "bench-entrusted.js may only import the shared view, crypto and style modules",
+    ["../../shared/bench-crypto.js", "../../shared/bench-entrusted-view.js", "../../shared/bench-evidence.js", "../../shared/bench-rich-text.js", "../../shared/bench-style.js", "../../shared/evidence-file-response.js"],
+    "bench-entrusted.js may only import the approved presentation, evidence and authorization helpers",
   );
   const sql = [...src.matchAll(/prepare\(\s*["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
   assert.ok(sql.length > 0, "expected at least one query to check");
   for (const q of sql) {
-    assert.match(q, /\bFROM\s+access_grants\b|\bUPDATE\s+access_grants\b|\bINSERT\s+INTO\s+access_grants\b/i, `unexpected table in: ${q}`);
-    assert.doesNotMatch(q, /docket_entries|patterns|glossary_terms|\bcases\b/i, `working-side table in: ${q}`);
+    assert.match(q, /\bFROM\s+(access_grants|docket_entries|evidence_note_links|evidence_artifacts)\b/i, `unexpected table in: ${q}`);
+    assert.doesNotMatch(q, /recommended_direction|commentary|court_takeaways|patterns|glossary_terms|\bcases\b/i, `private working-side data in: ${q}`);
+    if (/FROM\s+docket_entries/i.test(q)) {
+      assert.match(q, /SELECT id, case_id, share_number FROM docket_entries/i);
+      assert.match(q, /shared_at IS NOT NULL/i);
+    }
   }
 });
