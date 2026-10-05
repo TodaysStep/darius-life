@@ -108,7 +108,7 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <meta name="twitter:title" content="${escapeHtml(title)}">
 <meta name="twitter:description" content="Confidential access · darius.life">
 <meta name="twitter:image" content="https://confidential.darius.life/entrusted/stenotype.jpg?v=20261004-3">`;
-  page = page.replace(/<title>[^<]*<\\/title>/, `<title>${escapeHtml(title)}</title>`);
+  page = page.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`);
   return page.replace("</head>", `${meta}\n</head>`);
 }
 function renderLogin(error) {
