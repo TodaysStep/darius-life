@@ -225,54 +225,69 @@ code {
   }
 }
 
-
-/* HOW TO HELP — practical action instrument */
-[data-section="help"] {
+/* HOW TO HELP - practical action instrument */
+main > section:nth-of-type(5) {
   margin-top: 3.5em;
-  padding-bottom: 0.5em;
+  padding-bottom: 0.75em;
 }
-[data-section="help"] > h2 {
+
+main > section:nth-of-type(5) > h2 {
   border-top: 2px solid #111111;
   margin-bottom: 0.75em;
 }
-[data-section="help"] > p:first-of-type {
+
+main > section:nth-of-type(5) > p:first-of-type {
   max-width: 48ch;
   font-size: 1.05em;
   margin-bottom: 1.35em;
 }
-[data-section="help"] [data-id="help.priority"] {
+
+main > section:nth-of-type(5) > p:nth-of-type(2) {
   border-top: 1px solid #111111;
   border-bottom: 1px solid #111111;
-  padding: 0.9em 0;
+  padding: 0.95em 0;
   margin: 0 0 1.5em;
   font-weight: 700;
   letter-spacing: 0.035em;
 }
-[data-section="help"] ul {
-  margin-bottom: 1.5em;
+
+main > section:nth-of-type(5) > ul {
+  counter-reset: help-item;
+  border-top: 1px dotted rgba(17, 17, 17, 0.4);
 }
-[data-section="help"] li {
-  position: relative;
-  padding: 0.55em 0 0.65em 2.2ch;
+
+main > section:nth-of-type(5) > ul > li {
+  counter-increment: help-item;
+  display: grid;
+  grid-template-columns: 3ch 1fr;
+  column-gap: 1.2ch;
+  padding: 0.75em 0;
   margin: 0;
   border-bottom: 1px dotted rgba(17, 17, 17, 0.4);
 }
-[data-section="help"] li::before {
-  content: "→";
-  position: absolute;
-  left: 0;
+
+main > section:nth-of-type(5) > ul > li::before {
+  content: counter(help-item, decimal-leading-zero);
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding-top: 0.18em;
+}
+
+main > section:nth-of-type(5) > ul > li a {
   font-weight: 700;
 }
-[data-section="help"] li a {
-  font-weight: 700;
+
+main > section:nth-of-type(5) > ul > li:nth-last-child(2) {
+  margin-top: 1.1em;
+  border-top: 2px solid #111111;
+  padding-top: 1em;
 }
-[data-section="help"] [data-id="help.unsure"] {
-  display: inline-block;
-  padding: 0.45em 0;
-}
+
 @media (max-width: 520px) {
-  [data-section="help"] li {
-    padding-top: 0.7em;
-    padding-bottom: 0.75em;
+  main > section:nth-of-type(5) > ul > li {
+    grid-template-columns: 2.6ch 1fr;
+    column-gap: 1ch;
+    padding: 0.85em 0;
   }
 }
