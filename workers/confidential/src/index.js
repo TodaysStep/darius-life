@@ -17,32 +17,24 @@ import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut
 import { handleEvidenceRoom } from './bench-evidence-room.js';
 import { handleEvidenceApi } from './bench-evidence-api.js';
 import { acceptEvidenceEmail, runEvidenceJobs } from '../../shared/bench-evidence.js';
+import { queueEvidenceReceipt, runEvidenceReceipts } from '../../shared/bench-evidence-receipts.js';
 
 export default {
   async email(message, env, ctx) {
     const accepted = await acceptEvidenceEmail(message, env);
     if (!accepted.id || accepted.state === 'quarantined') return;
-    await (async()=>{
-      // A generic receipt returns only to the authenticated envelope sender.
-      // Never reply-all, echo the confidential subject, or honor source Reply-To.
-      if (/\r|\n/.test(message.from+message.to)) return;
-      if (message.headers.get('Auto-Submitted') && message.headers.get('Auto-Submitted') !== 'no') return;
-      const mid=(message.headers.get('Message-ID')||'').replace(/[\r\n]/g,'');
-      const text=`Received safely. The original email, including its attached bytes, is preserved.\r\nExtraction and registration are queued. The private receipt will show attachment counts, processing results and any items needing review.\r\nOpen the private receipt: https://confidential.darius.life/bench/evidence/${accepted.id}\r\n`;
-      const raw=`From: ${message.to}\r\nTo: ${message.from}\r\nSubject: Bench Notes intake receipt\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <${crypto.randomUUID()}@intake.darius.life>\r\n${mid?`In-Reply-To: ${mid}\r\nReferences: ${mid}\r\n`:''}Auto-Submitted: auto-replied\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${text}`;
-      try {
-        const {EmailMessage}=await import('cloudflare:email');
-        await message.reply(new EmailMessage(message.to,message.from,raw));
-        await env.BENCH_NOTES.prepare("UPDATE evidence_intakes SET receipt_json=json_set(receipt_json,'$.email_acknowledgment','sent') WHERE id=?").bind(accepted.id).run();
-      } catch (error) {
-        const code=/dmarc/i.test(String(error?.message))?'dmarc_rejected':/session|closed|ended/i.test(String(error?.message))?'smtp_session_unavailable':/date|header|mime/i.test(String(error?.message))?'invalid_receipt_headers':'reply_failed';
-        await env.BENCH_NOTES.prepare("UPDATE evidence_intakes SET receipt_json=json_set(receipt_json,'$.email_acknowledgment','failed','$.acknowledgment_error',?) WHERE id=?").bind(code,accepted.id).run();
-      }
-    })();
-    ctx.waitUntil(runEvidenceJobs(env, { limit: 1 }));
+    const automated=message.headers.get('Auto-Submitted');
+    if(!automated || automated.toLowerCase()==='no') await queueEvidenceReceipt(env,accepted.id);
+    ctx.waitUntil((async()=>{
+      await runEvidenceJobs(env,{limit:1});
+      await runEvidenceReceipts(env,{limit:2});
+    })());
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runEvidenceJobs(env, { limit: 2 }));
+    ctx.waitUntil((async()=>{
+      await runEvidenceJobs(env,{limit:2});
+      await runEvidenceReceipts(env,{limit:2});
+    })());
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

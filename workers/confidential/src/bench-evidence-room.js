@@ -12,12 +12,13 @@ const link=(id)=>`${BASE}/${encodeURIComponent(id)}`;
 const fileLink=(id,hash)=>`${link(id)}/original/${hash}`;
 function receiptView(intake){
  const r=parse(intake.receipt_json);
- return `<section class="card"><h2>Receipt</h2><p>Received ${esc(intake.received_at)} · ${esc(intake.state)}</p><p>Original email preserved${r.attachments_preserved!=null?` · ${esc(r.attachments_preserved)} attachments preserved · ${esc(r.processed)} processed · ${esc(r.needs_review)} need review`:''}.</p>${intake.error_code?'<p>Processing needs attention. Preserved originals remain available.</p>':''}</section>`;
+ return `<section class="card"><h2>Receipt</h2><p>Received ${esc(intake.received_at)} · ${esc(intake.state)}</p><p>${parse(intake.metadata_json).source_kind==='recovered_file'?'Recovered source file preserved':'Original email preserved'}${r.attachments_preserved!=null?` · ${esc(r.attachments_preserved)} attachments preserved · ${esc(r.processed)} processed · ${esc(r.needs_review)} need review`:''}.</p>${intake.error_code?'<p>Processing needs attention. Preserved originals remain available.</p>':''}</section>`;
 }
 function renderItem(record,controls=""){
  const {intake:i,parts,derivations,deliveries}=record;
  const meta=parse(i.metadata_json);
- const original=`<a href="${fileLink(i.id,i.original_artifact_id)}">Download original email (.eml)</a>`;
+ const recovered=meta.source_kind==='recovered_file';
+ const original=`<a href="${fileLink(i.id,i.original_artifact_id)}">${recovered?'Download recovered source file':'Download original email (.eml)'}</a>`;
  const attachments=parts.map(p=>{
   const url=fileLink(i.id,p.artifact_id), ds=derivations.filter(d=>d.artifact_id===p.artifact_id);
   const media=/^audio\//.test(p.mime_type)?renderEvidenceAudio({href:url,title:p.filename}):/^image\/(png|jpeg|webp|gif)$/.test(p.mime_type)?`<img src="${url}" alt="${esc(p.filename)}" style="max-width:100%;height:auto">`:'';
@@ -27,7 +28,7 @@ function renderItem(record,controls=""){
    return `<section><h3>${d.kind==='transcript'?'Automatic transcript':'Extracted text'}</h3><p class="hint">${esc(d.method)} · ${esc(d.version)}${provenance.ocr_status?' · '+esc(provenance.ocr_status):''}</p>${body}<details><summary>Derivation provenance</summary>${renderEvidenceText(JSON.stringify(provenance,null,2))}</details></section>`;
   }).join('')}${!ds.length?'<p>Derived text is not available. See the processing state above.</p>':''}</article>`;
  }).join('');
- return `<nav><a href="${BASE}">Evidence register</a> · <a href="/bench/">Bench Notes</a></nav><h1>Evidence intake</h1>${receiptView(i)}<h2>${esc(i.subject||'Email awaiting processing')}</h2><dl><dt>Envelope sender</dt><dd>${esc(i.envelope_from)}</dd><dt>Source message date (as supplied)</dt><dd>${esc(i.sent_at||'Unknown')}</dd><dt>Received</dt><dd>${esc(i.received_at)}</dd><dt>Message-ID</dt><dd>${esc(i.message_id||'Unknown')}</dd></dl><p>${original}</p><details><summary>Email addresses and headers</summary>${renderEvidenceText(JSON.stringify(meta,null,2))}</details><section class="card"><h2>Email communication</h2>${renderEvidenceText(i.body_text||'No plain-text body. The original email retains its complete MIME and HTML content.')}</section><p>${deliveries.length} delivery occurrence(s). Repeated attachment bytes share an original; each communication remains traceable.</p>${renderContext(record)}${controls}${attachments}`;
+ return `<nav><a href="${BASE}">Evidence register</a> · <a href="/bench/">Bench Notes</a></nav><h1>${recovered?'Recovered evidence':'Evidence intake'}</h1>${receiptView(i)}<h2>${esc(i.subject||'Email awaiting processing')}</h2><dl>${recovered?'<dt>Source</dt><dd>Recovered uploaded file</dd>':`<dt>Envelope sender</dt><dd>${esc(i.envelope_from)}</dd>`}<dt>Source message date (as supplied)</dt><dd>${esc(i.sent_at||'Unknown')}</dd><dt>Received</dt><dd>${esc(i.received_at)}</dd><dt>Message-ID</dt><dd>${esc(i.message_id||'Unknown')}</dd></dl><p>${original}</p><details><summary>${recovered?'Recovery provenance':'Email addresses and headers'}</summary>${renderEvidenceText(JSON.stringify(meta,null,2))}</details><section class="card"><h2>${recovered?'Recovery record':'Email communication'}</h2>${renderEvidenceText(i.body_text||'No plain-text body. The original email retains its complete MIME and HTML content.')}</section><p>${deliveries.length} delivery occurrence(s). Repeated attachment bytes share an original; each communication remains traceable.</p>${renderContext(record)}${controls}${attachments}`;
 }
 function renderContext(record){
  const context=record.context;
@@ -105,7 +106,7 @@ export async function handleEvidenceRoom(request,env,url){
  const record=await getEvidence(env,decodeURIComponent(m[1]));if(!record)return missing();
  if(m[2]){
   const part=record.parts.find(p=>p.artifact_id===m[2]);
-  const isEmail=record.intake.original_artifact_id===m[2];if(!part&&!isEmail)return missing();
+  const isEmail=record.intake.original_artifact_id===m[2]&&parse(record.intake.metadata_json).source_kind!=='recovered_file';if(!part&&!isEmail)return missing();
   const found=await getEvidenceArtifact(env,m[2]);if(!found?.object)return missing();
   const type=isEmail?'message/rfc822':part.mime_type;
   return evidenceFileResponse(request,env,found.artifact,{mimeType:type,filename:isEmail?'original.eml':part.filename});

@@ -142,6 +142,7 @@ const evidenceHref = (entryId, intakeId, hash) => `${PREFIX}evidence/${encodeURI
 
 function renderSharedIntake(entryId, record) {
   const { intake, parts, derivations } = record;
+  const recovered=parseJson(intake.metadata_json).source_kind==='recovered_file';
   const original = evidenceHref(entryId, intake.id, intake.original_artifact_id);
   const attachments = parts.map(part => {
     const href = evidenceHref(entryId, intake.id, part.artifact_id);
@@ -157,7 +158,7 @@ function renderSharedIntake(entryId, record) {
       : /^image\/(png|jpeg|webp|gif)$/.test(part.mime_type) ? `<img src="${escapeHtml(href)}" alt="${escapeHtml(part.filename)}" style="max-width:100%;height:auto">` : "";
     return `<article class="card"><h3>${escapeHtml(part.filename)}</h3><p>${escapeHtml(part.mime_type)} · ${escapeHtml(part.byte_size)} bytes · ${escapeHtml(part.state)}</p><p><a href="${escapeHtml(href)}">Open original</a> · <a href="${escapeHtml(href)}?download=1">Download original</a></p>${media}${derived || "<p>Derived text is unavailable; the preserved original remains available.</p>"}</article>`;
   }).join("\n");
-  return `<section class="shared-intake"><h2>Shared evidence intake</h2><p>${escapeHtml(intake.subject || "Email")}</p><dl><dt>From</dt><dd>${escapeHtml(intake.envelope_from)}</dd><dt>Received</dt><dd>${escapeHtml(intake.received_at)}</dd><dt>Source message date</dt><dd>${escapeHtml(intake.sent_at || "Unknown")}</dd></dl><p><a href="${escapeHtml(original)}">Download original email</a></p><h3>Email communication</h3>${renderEvidenceText(intake.body_text || "The preserved original contains the communication.")}${attachments}</section>`;
+  return `<section class="shared-intake"><h2>${recovered?'Recovered source evidence':'Shared evidence intake'}</h2><p>${escapeHtml(intake.subject || "Email")}</p><dl>${recovered?'<dt>Source</dt><dd>Recovered uploaded file</dd>':`<dt>From</dt><dd>${escapeHtml(intake.envelope_from)}</dd>`}<dt>Received</dt><dd>${escapeHtml(intake.received_at)}</dd><dt>Source message date</dt><dd>${escapeHtml(intake.sent_at || "Unknown")}</dd></dl><p><a href="${escapeHtml(original)}">${recovered?'Download recovered source file':'Download original email'}</a></p><h3>${recovered?'Recovery record':'Email communication'}</h3>${renderEvidenceText(intake.body_text || "The preserved original contains the communication.")}${attachments}</section>`;
 }
 
 async function renderLinkedIntakes(env, entryId) {
@@ -181,7 +182,7 @@ async function handleSharedEvidenceFile(request, env, match) {
   const record = await getEvidence(env, link.intake_id);
   if (!record) return notFound();
   const part = record.parts.find(p => p.artifact_id === match[3]);
-  const email = record.intake.original_artifact_id === match[3];
+  const email = record.intake.original_artifact_id === match[3] && parseJson(record.intake.metadata_json).source_kind !== 'recovered_file';
   if (!email && !part) return notFound();
   const artifact = await env.BENCH_NOTES.prepare("SELECT * FROM evidence_artifacts WHERE id = ?").bind(match[3]).first();
   if (!artifact) return notFound();

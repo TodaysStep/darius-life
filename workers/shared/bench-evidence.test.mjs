@@ -109,3 +109,20 @@ test('semantic retrieval returns only real passages from current evidence and re
  env.AI.run=async()=>{throw new Error('unavailable');};
  assert.equal((await semanticEvidenceSearch(env,{semantic_query:'same question'})).retrieval.state,'unavailable');
 });
+test('arrival context rejects unrelated historical people, dates and invented court roles',()=>{
+ const sources=[
+  {id:'arrival',artifact_id:'emailhash',text:'SYNTHETIC SCAN TEST. This is not a court document.',layer:'source_communication'},
+  {id:'history',docket_entry_id:'old-note',text:'Susan Heavilin at San Diego Chamber of Connection. Hearing October 16, 2026.',layer:'existing_register_entry'},
+  {id:'real',artifact_id:'documenthash',text:'Superior Court of California. Hearing October 16, 2026.',layer:'extracted_text'}
+ ];
+ const quote=(source_id,quote)=>({source_id,quote});
+ const claims=[
+  {type:'person',value:'Susan Heavilin',citations:[quote('history','Susan Heavilin at San Diego Chamber of Connection.')]},
+  {type:'person',value:'Susan Heavilin',citations:[quote('arrival','SYNTHETIC SCAN TEST.'),quote('history','Susan Heavilin at San Diego Chamber of Connection.')]},
+  {type:'court',value:'San Diego Chamber of Connection',citations:[quote('arrival','This is not a court document.'),quote('history','San Diego Chamber of Connection.')]},
+  {type:'hearing',value:'Hearing October 16, 2026',citations:[quote('arrival','SYNTHETIC SCAN TEST.'),quote('history','Hearing October 16, 2026.')]},
+  {type:'court',value:'Superior Court of California',citations:[quote('real','Superior Court of California.')]},
+  {type:'hearing',value:'Hearing October 16, 2026',citations:[quote('real','Hearing October 16, 2026.')]}
+ ];
+ const result=validateEvidenceContext({claims},sources);assert.equal(result.claims.length,2);assert.deepEqual(result.claims.map(c=>c.type),['court','hearing']);
+});

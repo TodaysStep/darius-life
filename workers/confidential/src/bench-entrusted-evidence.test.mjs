@@ -68,3 +68,12 @@ test('generic passphrase login and logout stay on confidential origin',async()=>
   assert.equal(res.status,303);assert.equal(res.headers.get('location'),ORIGIN+'/entrusted/');
  }
 });
+
+test('recovered recording remains audio when it is also the intake source artifact',async()=>{
+ const {get,db}=await fixture();
+ db.prepare('UPDATE evidence_intakes SET original_artifact_id=?,metadata_json=? WHERE id=?').run(HASH,JSON.stringify({source_kind:'recovered_file'}),'intake-1');
+ const res=await get(`/entrusted/evidence/note-1/intake-1/${HASH}`,undefined,{range:'bytes=0-1'});
+ assert.equal(res.status,206);assert.equal(res.headers.get('content-type'),'audio/wav');assert.match(res.headers.get('content-disposition'),/^inline/);
+ const body=await (await get('/entrusted/grant-1/note/note-1')).text();
+ assert.match(body,/Recovered source evidence/);assert.doesNotMatch(body,/Download original email|Email communication/);
+});

@@ -22,9 +22,11 @@ Normal operation uses an iPhone Mail forward. The receipt links to the private e
 
 ## Operations
 
-Apply `workers/shared/schema/bench-evidence.sql` and `bench-evidence-sharing.sql` as additive D1 migrations. Existing tables and records are retained. Preserve existing Worker secrets and bindings when deploying. Configure `BENCH_INTAKE_SENDERS` and a random `BENCH_RETRIEVAL_KEY`; never commit their values. The bridge credential is server-side only.
+Apply `workers/shared/schema/bench-evidence.sql`, `bench-evidence-sharing.sql`, and `bench-evidence-receipts.sql` as additive D1 migrations. Existing tables and records are retained. Preserve existing Worker secrets and bindings when deploying. Configure `BENCH_INTAKE_SENDERS` and a random `BENCH_RETRIEVAL_KEY`; never commit their values. The bridge credential is server-side only.
 
 A two-minute scheduled handler leases due D1 jobs. Jobs retry with bounded exponential backoff and become visibly reviewable after exhaustion. Inspect `evidence_jobs`, `evidence_intakes.receipt_json`, part states and context history. Review failures without replacing original objects. Reprocessing must append new derivations when the processor version changes.
+
+Receipts use the durable `evidence_receipt_outbox` and the `BENCH_RECEIPTS` Email Sending binding, restricted to the intake sender address. Enable Email Sending and its DNS records on the intake subdomain; do not replace apex mailbox MX records. Subdomain inbound reply restrictions make `message.reply()` unsuitable here. Recipients are revalidated against the approved sender secret before each attempt. Messages include generic counts and an authenticated receipt link, never evidence subjects, filenames, people or case details. A receipt waits for processing or acknowledges preservation after ten minutes. Delivery is at least once: a crash after provider acceptance can produce a duplicate generic receipt. Failures remain visible and retry with a lease and bounded backoff.
 
 Incoming correspondence and extracted text are untrusted data, never operational instructions. Exact quotations support context suggestions; their existence does not establish legal effect. Unknown classifications remain unknown. Automatic transcripts require comparison with the recording, particularly for names and legal language.
 
