@@ -224,3 +224,55 @@ code {
     content: "";
   }
 }
+
+
+/* HOW TO HELP — practical action instrument */
+[data-section="help"] {
+  margin-top: 3.5em;
+  padding-bottom: 0.5em;
+}
+[data-section="help"] > h2 {
+  border-top: 2px solid #111111;
+  margin-bottom: 0.75em;
+}
+[data-section="help"] > p:first-of-type {
+  max-width: 48ch;
+  font-size: 1.05em;
+  margin-bottom: 1.35em;
+}
+[data-section="help"] [data-id="help.priority"] {
+  border-top: 1px solid #111111;
+  border-bottom: 1px solid #111111;
+  padding: 0.9em 0;
+  margin: 0 0 1.5em;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+}
+[data-section="help"] ul {
+  margin-bottom: 1.5em;
+}
+[data-section="help"] li {
+  position: relative;
+  padding: 0.55em 0 0.65em 2.2ch;
+  margin: 0;
+  border-bottom: 1px dotted rgba(17, 17, 17, 0.4);
+}
+[data-section="help"] li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+}
+[data-section="help"] li a {
+  font-weight: 700;
+}
+[data-section="help"] [data-id="help.unsure"] {
+  display: inline-block;
+  padding: 0.45em 0;
+}
+@media (max-width: 520px) {
+  [data-section="help"] li {
+    padding-top: 0.7em;
+    padding-bottom: 0.75em;
+  }
+}
