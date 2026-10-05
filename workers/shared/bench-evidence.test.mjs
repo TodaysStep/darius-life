@@ -178,3 +178,16 @@ test('image OCR output token ceiling stays review-required across duplicate arti
  assert.equal(record.parts[0].state,'needs_review_ocr_truncated');assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,true);
  const other=await acceptEvidenceEmail(message(raw.replace('image truncation','another occurrence')),env);await runEvidenceJobs(env);record=await getEvidence(env,other.id);assert.equal(record.parts[0].state,'needs_review_ocr_truncated');
 });
+test('repetitive page OCR is excluded and stale complete PDF cache cannot bypass correction',async()=>{
+ const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.create();const image=await pdf.embedPng(await evidenceImagePNG({width:3,height:3,channels:3,data:new Uint8Array(27).fill(255)}));pdf.addPage().drawImage(image);
+ const {env,sql}=setup();let calls=0;env.AI.run=async model=>model.includes('mistral-small')?({response:'Invalid run '+ '_'.repeat(300),usage:{completion_tokens:300}}):({response:{claims:[]}});
+ const raw=email('repetitive scan',Buffer.from(await pdf.save()).toString('base64')).replace('Content-Type: text/plain\r\nContent-Disposition','Content-Type: application/pdf\r\nContent-Disposition');
+ const accepted=await acceptEvidenceEmail(message(raw),env);await runEvidenceJobs(env);let record=await getEvidence(env,accepted.id);const artifact=record.parts[0].artifact_id;
+ assert.equal(record.pdf_pages[0].state,'needs_review');assert.equal(record.derivations[0].text_content,'');assert.equal(JSON.parse(record.derivations[0].provenance_json).pages[0].text,'');
+ sql.prepare("INSERT INTO evidence_derivations(id,artifact_id,kind,method,version,created_at,text_content,provenance_json) VALUES(?,?,'extracted_text','checkpointed-pdf/native+vision-ocr','2026-10-05.3','2000-01-01',?,?)").run('old-complete',artifact,'Invalid run '+ '_'.repeat(300),'{}');
+ sql.exec("UPDATE evidence_parts SET state='processed' WHERE mime_type='application/pdf'; UPDATE evidence_jobs SET state='pending',available_at='2000-01-01'");await runEvidenceJobs(env);record=await getEvidence(env,accepted.id);
+ assert.equal(record.parts[0].state,'needs_review_pdf_pages');assert.equal(record.derivations[0].text_content,'');assert.ok(record.derivation_history.some(d=>d.id==='old-complete'));assert.equal((await listEvidence(env,{q:'Invalid run'})).length,0);
+ env.AI.run=async model=>model.includes('mistral-small')?({response:'Valid recovered page body '+ ++calls}):({response:{claims:[]}});
+ sql.exec("UPDATE evidence_pdf_pages SET state='pending'; UPDATE evidence_parts SET state='preserved' WHERE mime_type='application/pdf'; UPDATE evidence_jobs SET state='pending',available_at='2000-01-01'");await runEvidenceJobs(env);record=await getEvidence(env,accepted.id);
+ assert.equal(calls,1);assert.equal(record.derivations[0].version,'2026-10-05.3-validation2-complete');assert.match(record.derivations[0].text_content,/Valid recovered page body/);assert.equal(JSON.parse(record.derivations[0].provenance_json).partial,false);assert.ok(record.derivation_history.some(d=>d.id==='old-complete'));
+});
