@@ -8,7 +8,9 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: false
+  # A queued older release must never overwrite a newer evidence-preservation
+  # repair. The latest run still executes every validation gate.
+  cancel-in-progress: true
 jobs:
   evidence-tests:
     runs-on: ubuntu-latest
