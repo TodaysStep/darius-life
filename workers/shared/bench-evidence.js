@@ -1,7 +1,6 @@
 import PostalMime from 'postal-mime';
-import { extractText, extractImages } from 'unpdf';
-import { PDFDocument } from 'pdf-lib';
-const VERSION = '2026-10-05.2';
+import { extractText, getDocumentProxy, getResolvedPDFJS } from 'unpdf';
+const VERSION = '2026-10-05.3';
 const CONTEXT_VERSION = '2026-10-05.4';
 const MAX_PROCESS_BYTES = 20 * 1024 * 1024;
 const now = () => new Date().toISOString();
@@ -87,35 +86,86 @@ async function visionOCR(env,bytes,mime='image/png') {
  if(!text?.trim() || ['NO_READABLE_TEXT','[illegible]'].includes(text.trim()))throw new Error('ocr_no_text');
  return text.trim();
 }
-async function derive(env,part,bytes) {
+export function boundedScanRaster(image,maxSide=2000) {
+ const {width,height,data,kind}=image;
+ if(!width||!height||!data||width*height>40000000)throw new Error('scan_image_limit');
+ const packed=kind===1,channels=packed?1:kind===3?4:3;
+ if(!packed && data.length!==width*height*channels)throw new Error('scan_image_encoding');
+ const scale=Math.min(1,maxSide/Math.max(width,height)),w=Math.max(1,Math.round(width*scale)),h=Math.max(1,Math.round(height*scale));
+ const output=new Uint8Array(w*h*channels),stride=Math.ceil(width/8);
+ for(let y=0;y<h;y++){const sy=Math.min(height-1,Math.floor(y/scale));for(let x=0;x<w;x++){const sx=Math.min(width-1,Math.floor(x/scale));
+  if(packed)output[y*w+x]=(data[sy*stride+(sx>>3)]&(128>>(sx&7)))?255:0;
+  else for(let channel=0;channel<channels;channel++)output[(y*w+x)*channels+channel]=data[(sy*width+sx)*channels+channel];
+ }}
+ return {width:w,height:h,channels,data:output,original_width:width,original_height:height};
+}
+export async function extractPageScanRasters(pdf,pageNumber) {
+ const page=await pdf.getPage(pageNumber),operators=await page.getOperatorList(),{OPS}=await getResolvedPDFJS();
+ const images=[];
+ for(let i=0;i<operators.fnArray.length;i++) {
+  const op=operators.fnArray[i];let image;
+  if(op===OPS.paintImageXObject) {
+   const key=operators.argsArray[i][0];image=await new Promise(resolve=>(key.startsWith('g_')?page.commonObjs:page.objs).get(key,resolve));
+  } else if(op===OPS.paintInlineImageXObject)image=operators.argsArray[i][0];
+  else continue;
+  if(image?.data)images.push(boundedScanRaster(image));
+ }
+ return images;
+}
+async function deriveCheckpointedPDF(env,part,bytes,budget) {
+ let native;try{native=await extractText(new Uint8Array(bytes.slice(0)),{mergePages:false});}catch{throw new Error('pdf_native_parse_failed');}
+ const nativePages=Array.isArray(native?.text)?native.text:[];
+ const count=nativePages.length;
+ if(!count)throw new Error('pdf_no_pages');
+ if(count>150)return 'needs_review_pdf_page_limit';
+ // Register all page states before beginning slow OCR. Native text is immediately durable.
+ const inserts=nativePages.map((text,index)=>env.BENCH_NOTES.prepare('INSERT OR IGNORE INTO evidence_pdf_pages(artifact_id,page_number,processor_version,state,text_content,method,updated_at) VALUES(?,?,?,?,?,?,?)').bind(part.artifact_id,index+1,VERSION,text.trim()?'processed':'pending',text,text.trim()?'native_text':null,now()));
+ await env.BENCH_NOTES.batch(inserts);
+ let pdf;
+ try {
+  const pending=await rows(env,"SELECT * FROM evidence_pdf_pages WHERE artifact_id=? AND processor_version=? AND (state IN ('pending','retry') OR (state='running' AND lease_until<?)) ORDER BY page_number",part.artifact_id,VERSION,now());
+  for(const page of pending) {
+   if(budget.remaining<=0)break;
+   const lease=new Date(Date.now()+5*60*1000).toISOString();
+   const claimed=await run(env,"UPDATE evidence_pdf_pages SET state='running',lease_until=?,attempts=attempts+1,updated_at=? WHERE artifact_id=? AND page_number=? AND processor_version=? AND (state IN ('pending','retry') OR (state='running' AND lease_until<?))",lease,now(),part.artifact_id,page.page_number,VERSION,now());
+   if(!claimed.meta?.changes)continue;
+   budget.remaining--;
+   try {
+    if(!pdf)pdf=await getDocumentProxy(new Uint8Array(bytes.slice(0)));
+    const images=await extractPageScanRasters(pdf,page.page_number);
+    if(!images.length || images.length>8)throw new Error('scan_images_unavailable');
+    const texts=[];
+    for(const image of images)texts.push(await visionOCR(env,await evidenceImagePNG(image)));
+    await run(env,"UPDATE evidence_pdf_pages SET state='processed',text_content=?,method='vision_ocr_embedded_page_images',error_code=NULL,lease_until=NULL,updated_at=? WHERE artifact_id=? AND page_number=? AND processor_version=? AND lease_until=?",texts.join('\n\n'),now(),part.artifact_id,page.page_number,VERSION,lease);
+   }catch(error) {
+    const safeCodes=['scan_images_unavailable','scan_image_limit','scan_image_encoding','ocr_no_text','ocr_unavailable'];
+    const code=safeCodes.includes(error?.message)?error.message:'ocr_provider_failed';
+    const permanent=['scan_images_unavailable','scan_image_limit','scan_image_encoding','ocr_no_text'].includes(code);
+    const state=permanent||page.attempts>=2?'needs_review':'retry';
+    await run(env,'UPDATE evidence_pdf_pages SET state=?,error_code=?,lease_until=NULL,updated_at=? WHERE artifact_id=? AND page_number=? AND processor_version=? AND lease_until=?',state,code,now(),part.artifact_id,page.page_number,VERSION,lease);
+    console.log(JSON.stringify({event:'evidence_pdf_page',artifact_id:part.artifact_id,page:page.page_number,state,error_code:code}));
+   }
+  }
+ }finally{if(pdf)await pdf.destroy();}
+ const pages=await rows(env,'SELECT page_number,state,text_content,method,error_code,attempts FROM evidence_pdf_pages WHERE artifact_id=? AND processor_version=? ORDER BY page_number',part.artifact_id,VERSION);
+ const pending=pages.some(p=>['pending','running','retry'].includes(p.state)),review=pages.some(p=>p.state==='needs_review');
+ const text=pages.filter(p=>p.state==='processed').map(p=>`[Page ${p.page_number}]\n${p.text_content}`).join('\n\n');
+ if(text) {
+  const complete=!pending&&!review,processed=pages.filter(p=>p.state==='processed').length;
+  const derivationVersion=complete?VERSION:`${VERSION}-partial-${processed}-${pages.filter(p=>p.state==='needs_review').length}`;
+  const provenance={artifact_id:part.artifact_id,page_references_available:true,source_layer:'extracted_fact',partial:!complete,pages_total:count,pages_processed:processed,ocr_status:pages.some(p=>p.method?.startsWith('vision'))?'vision_ocr_derived':'not_used',pages:pages.map(p=>({page:p.page_number,text:p.text_content,method:p.method,status:p.state,error_code:p.error_code})),warning:'Only processed pages contribute searchable text. Missing or failed pages remain preserved in the original PDF. Machine OCR requires checking against the original; image order may differ from page reading order.'};
+  await run(env,'INSERT OR IGNORE INTO evidence_derivations(id,artifact_id,kind,method,version,created_at,text_content,provenance_json) VALUES(?,?,?,?,?,?,?,?)',uid(),part.artifact_id,'extracted_text','checkpointed-pdf/native+vision-ocr',derivationVersion,now(),text,json(provenance));
+ }
+ return pending?'processing_pending':review?'needs_review_pdf_pages':'processed';
+}
+async function derive(env,part,bytes,budget={remaining:2}) {
  const cached = await first(env,'SELECT id FROM evidence_derivations WHERE artifact_id=? AND version=?',part.artifact_id,VERSION);
  if(cached) return 'processed';
  if(bytes.byteLength > MAX_PROCESS_BYTES) return 'needs_review_too_large';
  let text='', kind='extracted_text',method='',provenance={artifact_id:part.artifact_id,page_references_available:false,source_layer:'extracted_fact'};
  if (/^text\/(plain|csv)$/i.test(part.mime_type)) {text=new TextDecoder().decode(bytes);method='utf8-decoder';}
  else if (part.mime_type==='application/pdf' || /\.pdf$/i.test(part.filename||'')) {
-  let extracted;
-  try { extracted=await extractText(new Uint8Array(bytes.slice(0)),{mergePages:false}); } catch { extracted=null; }
-  const pages=Array.isArray(extracted?.text)?extracted.text:[];
-  if(pages.length && pages.every(p=>p.trim())) {
-   text=pages.map((p,i)=>`[Page ${i+1}]\n${p}`).join('\n\n');method='unpdf/1.4.0';
-   provenance.pages=pages.map((p,i)=>({page:i+1,text:p,method:'native_text'}));provenance.page_references_available=true;provenance.ocr_status='not_used';
-  } else {
-   if(!env.AI?.run) throw new Error('ocr_unavailable');
-   const pdf=await PDFDocument.load(bytes,{ignoreEncryption:false});
-   if(pdf.getPageCount()>30) return 'needs_review_pdf_page_limit';
-   const out=[];
-   for(let i=0;i<pdf.getPageCount();i++) {
-    if(pages[i]?.trim()){out.push({page:i+1,text:pages[i],method:'native_text'});continue;}
-    const images=await extractImages(new Uint8Array(bytes.slice(0)),i+1);
-    if(!images.length || images.length>8)throw new Error('scan_images_unavailable');
-    const imageTexts=[];
-    for(const image of images)imageTexts.push(await visionOCR(env,await evidenceImagePNG(image)));
-    out.push({page:i+1,text:imageTexts.join('\n\n'),method:'vision_ocr_embedded_page_images',images_processed:images.length,review_required:true});
-   }
-   text=out.map(p=>`[Page ${p.page}]\n${p.text}`).join('\n\n');method='unpdf+workers-ai/mistral-small-3.1-24b-instruct';
-   provenance.pages=out;provenance.page_references_available=true;provenance.ocr_status='vision_ocr_derived';provenance.warning='Machine OCR from embedded page images; verify against original. Image order may differ from page reading order.';
-  }
+  return deriveCheckpointedPDF(env,part,bytes,budget);
  } else if (/^audio\//.test(part.mime_type)) {
   if (!env.AI) throw new Error('processor_unavailable');
   const result = await env.AI.run('@cf/openai/whisper',{audio:Array.from(new Uint8Array(bytes))});
@@ -237,17 +287,21 @@ async function processIntake(env,id,lease) {
   }
  }
  const parts=await rows(env,'SELECT * FROM evidence_parts WHERE intake_id=? ORDER BY part_index',id);
+ await run(env,"UPDATE evidence_intakes SET receipt_json=json_set(COALESCE(receipt_json,'{}'),'$.attachments_preserved',?,'$.processing','processing') WHERE id=? AND EXISTS (SELECT 1 FROM evidence_jobs WHERE intake_id=? AND lease_until=? AND state='running')",parts.length,id,id,lease);
+ const budget={remaining:2};
  let failures=0;
  for(const p of parts) {
   if(p.state.startsWith('needs_review')) continue;
   if(p.state==='processed' && await first(env,'SELECT id FROM evidence_derivations WHERE artifact_id=? AND version=?',p.artifact_id,VERSION))continue;
   try {
    const a=await first(env,'SELECT * FROM evidence_artifacts WHERE id=?',p.artifact_id);
-   const state=a.byte_size>MAX_PROCESS_BYTES?'needs_review_too_large':await derive(env,p,await (await env.BENCH_DOCUMENTS.get(a.object_key)).arrayBuffer());
+   const state=a.byte_size>MAX_PROCESS_BYTES?'needs_review_too_large':await derive(env,p,await (await env.BENCH_DOCUMENTS.get(a.object_key)).arrayBuffer(),budget);
    await run(env,'UPDATE evidence_parts SET state=?,error_code=NULL WHERE id=?',state,p.id);
-  } catch {
+  } catch(error) {
    failures++;
-   await run(env,"UPDATE evidence_parts SET state='processing_failed',error_code='derivation_failed' WHERE id=?",p.id);
+   const code=['pdf_native_parse_failed','pdf_no_pages','no_text_returned'].includes(error?.message)?error.message:'derivation_failed';
+   await run(env,"UPDATE evidence_parts SET state='processing_failed',error_code=? WHERE id=?",code,p.id);
+   console.log(JSON.stringify({event:'evidence_derivation',artifact_id:p.artifact_id,state:'processing_failed',error_code:code}));
   }
  }
  const derivations=await rows(env,"SELECT d.* FROM evidence_derivations d WHERE d.artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version)))",id);
@@ -255,12 +309,14 @@ async function processIntake(env,id,lease) {
  const cases=await rows(env,'SELECT id,case_number FROM cases WHERE case_number IS NOT NULL');
  const related=cases.filter(c=>c.case_number && new RegExp(`(^|[^A-Za-z0-9])${c.case_number.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}([^A-Za-z0-9]|$)`,'i').test(text)).map(c=>c.id);
  const finalParts=await rows(env,'SELECT state,mime_type FROM evidence_parts WHERE intake_id=?',id);
- const contextState=await contextualize(env,intake,mail,derivations,lease);
- const review=finalParts.filter(p=>p.state!=='processed').length+(contextState==='needs_review'?1:0);
+ const stillProcessing=finalParts.some(p=>p.state==='processing_pending');
+ const contextState=stillProcessing?'pending':await contextualize(env,intake,mail,derivations,lease);
+ const review=finalParts.filter(p=>p.state!=='processed'&&p.state!=='processing_pending').length+(contextState==='needs_review'?1:0);
  const latestReceipt=await first(env,'SELECT receipt_json FROM evidence_intakes WHERE id=?',id);
  const priorReceipt=JSON.parse(latestReceipt?.receipt_json||'{}');
- const receipt={...priorReceipt,received:true,original_preserved:true,processing:failures?'retry_pending':review?'needs_review':'complete',attachments_preserved:parts.length,processed:finalParts.filter(p=>p.state==='processed').length,context_state:contextState,needs_review:review,related_case_ids:related,association_method:'exact case number found in source/extracted text; not a legal conclusion',confirmed_at:now()};
- await run(env,"UPDATE evidence_intakes SET state=?,updated_at=?,case_ids_json=?,receipt_json=?,error_code=? WHERE id=? AND EXISTS (SELECT 1 FROM evidence_jobs WHERE intake_id=? AND lease_until=? AND state='running')",failures?'processing_failed':review?'needs_review':'registered',now(),json(related),json(receipt),failures?'derivation_failed':null,id,id,lease);
+ const receipt={...priorReceipt,received:true,original_preserved:true,processing:stillProcessing?'processing':failures?'retry_pending':review?'needs_review':'complete',attachments_preserved:parts.length,processed:finalParts.filter(p=>p.state==='processed').length,context_state:contextState,needs_review:review,related_case_ids:related,association_method:'exact case number found in source/extracted text; not a legal conclusion',confirmed_at:now()};
+ await run(env,"UPDATE evidence_intakes SET state=?,updated_at=?,case_ids_json=?,receipt_json=?,error_code=? WHERE id=? AND EXISTS (SELECT 1 FROM evidence_jobs WHERE intake_id=? AND lease_until=? AND state='running')",stillProcessing?'processing':failures?'processing_failed':review?'needs_review':'registered',now(),json(related),json(receipt),failures?'derivation_failed':null,id,id,lease);
+ if(stillProcessing)return 'pending';
  if(failures || contextState==='needs_review') throw new Error(failures?'derivation_failed':'context_failed');
 }
 export async function runEvidenceJobs(env,{limit=2}={}) {
@@ -270,11 +326,16 @@ export async function runEvidenceJobs(env,{limit=2}={}) {
   const lease=new Date(Date.now()+10*60*1000).toISOString();
   const claimed=await run(env,"UPDATE evidence_jobs SET state='running',lease_until=?,attempts=attempts+1 WHERE id=? AND ((state IN ('pending','retry') AND available_at<=?) OR (state='running' AND lease_until<?))",lease,job.id,time,time);
   if(!claimed.meta?.changes) continue;
-  try {await processIntake(env,job.intake_id,lease);console.log(JSON.stringify({event:'evidence_job_complete',id:job.id,state:'done'}));await run(env,"UPDATE evidence_jobs SET state='done',lease_until=NULL,error_code=NULL WHERE id=? AND lease_until=?",job.id,lease);}
+  try {
+   const state=await processIntake(env,job.intake_id,lease);
+   if(state==='pending')await run(env,"UPDATE evidence_jobs SET state='pending',attempts=MAX(0,attempts-1),available_at=?,lease_until=NULL,error_code=NULL WHERE id=? AND lease_until=?",new Date(Date.now()+15000).toISOString(),job.id,lease);
+   else await run(env,"UPDATE evidence_jobs SET state='done',lease_until=NULL,error_code=NULL WHERE id=? AND lease_until=?",job.id,lease);
+   console.log(JSON.stringify({event:'evidence_job_complete',id:job.id,state:state==='pending'?'pending':'done'}));
+  }
   catch {
    const exhausted=job.attempts>=4;
    console.log(JSON.stringify({event:'evidence_job_failed',id:job.id,state:exhausted?'needs_review':'retry',error_code:'processing_failed'}));
-   await run(env,"UPDATE evidence_intakes SET state=?,error_code=?,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM evidence_jobs WHERE intake_id=? AND lease_until=? AND state='running')",exhausted?'needs_review':'processing_failed','processing_failed',now(),job.intake_id,job.intake_id,lease);
+   await run(env,"UPDATE evidence_intakes SET state=?,error_code=?,updated_at=?,receipt_json=json_set(COALESCE(receipt_json,'{}'),'$.processing',?) WHERE id=? AND EXISTS (SELECT 1 FROM evidence_jobs WHERE intake_id=? AND lease_until=? AND state='running')",exhausted?'needs_review':'processing_failed','processing_failed',now(),exhausted?'needs_review':'retry_pending',job.intake_id,job.intake_id,lease);
    await run(env,'UPDATE evidence_jobs SET state=?,available_at=?,lease_until=NULL,error_code=? WHERE id=? AND lease_until=?',exhausted?'needs_review':'retry',new Date(Date.now()+Math.min(3600000,60000*2**job.attempts)).toISOString(),'processing_failed',job.id,lease);
   }
  }
@@ -303,7 +364,8 @@ export async function getEvidence(env,id) {
  const deliveries=await rows(env,'SELECT * FROM evidence_deliveries WHERE intake_id=? ORDER BY received_at',id);
  const context=await first(env,'SELECT * FROM evidence_context WHERE intake_id=?',id);
  const context_history=await rows(env,'SELECT * FROM evidence_context_history WHERE intake_id=? ORDER BY created_at DESC LIMIT 20',id);
- return {intake,parts,derivations,derivation_history,deliveries,context,context_history};
+ const pdf_pages=await rows(env,'SELECT artifact_id,page_number,processor_version,state,method,error_code,attempts FROM evidence_pdf_pages WHERE artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) ORDER BY artifact_id,page_number',id);
+ return {intake,parts,derivations,derivation_history,deliveries,context,context_history,pdf_pages};
 }
 export async function getEvidenceArtifact(env,id) {
  const artifact=await first(env,'SELECT * FROM evidence_artifacts WHERE id=?',id);
