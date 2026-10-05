@@ -24,7 +24,6 @@
     "https://livinginstruments.com/press/media-kit",
     "https://livinginstruments.com/living-instruments/public/how-we-work",
     "https://livinginstruments.com/legal/honest-reading-terms",
-    "https://smallstep.ventures/donate",
     "https://livinginstruments.com/living-instruments/public/operating-model",
     "https://posterityos.com/posterity/1.0/en/contents",
     "https://dreamstep.education",
@@ -35,8 +34,16 @@
     "https://napkinsketch.studio",
     "https://dreamstep.engineering",
     "https://loxmusic.com",
-    "https://foundingrecord.org"
+    "https://foundingrecord.org",
+    "https://www.instacart.com/p/gift-cards",
+    "https://www.doordash.com/gift-cards/",
+    "https://www.target.com/gift-registry/create-custom-registry",
+    "https://www.meals-on-wheels.org/",
+    "https://211sandiego.org/housing-information/"
   ],
-  "verify": ["/terms.txt", "/terms.sha256"],
+  "verify": [
+    "/terms.txt",
+    "/terms.sha256"
+  ],
   "mailto": []
 }
