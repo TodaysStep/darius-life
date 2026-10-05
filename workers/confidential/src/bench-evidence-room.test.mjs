@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
+import {projectEvidenceRecord} from './bench-evidence-api.js';
 import {handleEvidenceRoom} from './bench-evidence-room.js';
 import {resetCertsCacheForTests} from '../../shared/access.js';
 const ORIGIN='https://confidential.darius.life', HASH='a'.repeat(64);
@@ -74,4 +75,12 @@ test('receipt recovery is separately authorized, resets failed outbox atomically
  assert.equal(db.prepare('SELECT original_artifact_id FROM evidence_intakes').get().original_artifact_id,before);
  assert.equal(db.prepare('SELECT state FROM evidence_jobs').get().state,'needs_review');
  for(const state of ['pending','sent','running']){db.prepare('UPDATE evidence_receipt_outbox SET state=?,lease_until=?').run(state,'live-lease');assert.equal((await request('retry-receipt',{method:'POST',form:{id:'intake'}})).status,409);assert.equal(db.prepare('SELECT lease_until FROM evidence_receipt_outbox').get().lease_until,'live-lease');assert.doesNotMatch(await (await request('intake')).text(),/>Retry receipt</);}
+});
+
+test('connector item projection retains current citations without duplicating historical source packets',()=>{
+ const largeText='superseded private fragment '.repeat(4000),current={id:'current',text_content:'Current exact source',provenance_json:JSON.stringify({pages:[{page:2,text:'Current exact source'}],artifact_id:HASH})};
+ const record={intake:{id:'intake',body_text:'Source email'},parts:[{sha256:HASH}],derivations:[current],context:{context_json:'{"claims":[]}'},derivation_history:Array.from({length:30},(_,i)=>({id:'revision-'+i,artifact_id:HASH,kind:'extracted_text',method:'OCR',version:'v'+i,created_at:'t',superseded:true,text_content:largeText,provenance_json:JSON.stringify({partial:true,pages_total:12,pages_processed:i,pages:[{page:1,text:largeText}]})})),context_history:[{id:'context-old',intake_id:'intake',method:'model',version:'v1',created_at:'t',state:'needs_review',context_json:JSON.stringify({claims:[{quote:largeText}]})}]};
+ const before=JSON.stringify(record),projected=projectEvidenceRecord(record),response=JSON.stringify(projected);
+ assert.ok(before.length>1500000);assert.ok(response.length<20000);assert.doesNotMatch(response,/superseded private fragment/);
+ assert.deepEqual(projected.derivations,[current]);assert.deepEqual(projected.intake,record.intake);assert.equal(projected.derivation_history.length,30);assert.equal(projected.derivation_history[0].partial,true);assert.equal(projected.derivation_history[0].artifact_id,HASH);assert.equal(projected.context_history[0].state,'needs_review');assert.equal(projected.history_retrieval.historical_content_included,false);assert.equal(JSON.stringify(record),before);
 });
