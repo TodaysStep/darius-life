@@ -48,19 +48,21 @@ function renderContext(record){
 
 async function ownerControls(env,record,notice){
  const id=record.intake.id;
- const [job,notes,links]=await Promise.all([
+ const [job,notes,links,outbox]=await Promise.all([
   env.BENCH_NOTES.prepare('SELECT state,attempts,available_at,error_code FROM evidence_jobs WHERE intake_id=?').bind(id).first(),
   env.BENCH_NOTES.prepare('SELECT id,case_label,entry_date,share_number,shared_at,substr(fact,1,120) AS excerpt FROM docket_entries ORDER BY entry_date DESC LIMIT 200').all(),
-  env.BENCH_NOTES.prepare('SELECT l.entry_id,l.shared_at,e.share_number,e.entry_date,e.case_label,e.shared_at AS note_shared_at FROM evidence_note_links l JOIN docket_entries e ON e.id=l.entry_id WHERE l.intake_id=?').bind(id).all()
+  env.BENCH_NOTES.prepare('SELECT l.entry_id,l.shared_at,e.share_number,e.entry_date,e.case_label,e.shared_at AS note_shared_at FROM evidence_note_links l JOIN docket_entries e ON e.id=l.entry_id WHERE l.intake_id=?').bind(id).all(),
+  env.BENCH_NOTES.prepare('SELECT state,attempts,error_code FROM evidence_receipt_outbox WHERE intake_id=?').bind(id).first()
  ]);
  const noteLabel=n=>`${n.share_number!=null?'Bench Note '+String(n.share_number).padStart(3,'0'):n.entry_date+' entry'} · ${n.case_label||''}`;
  const retryAllowed=job&&['done','retry','needs_review'].includes(job.state)&&(record.intake.state!=='registered'||record.context?.state==='needs_review');
  const retry=`<section class="card"><h2>Processing</h2><p>${job?`Job: ${esc(job.state)} · ${esc(job.attempts)} attempt(s)`: 'No processing job is registered.'}</p>${job?.error_code?'<p>Processing needs attention. Originals are preserved.</p>':''}${retryAllowed?`<form method="post" action="${BASE}/retry"><input type="hidden" name="id" value="${esc(id)}"><button type="submit">Retry failed processing and context</button></form><p class="hint">Unsupported files remain available for review. Retrying does not replace originals.</p>`:''}</section>`;
+ const receiptRetry=`<section class="card"><h2>Email acknowledgment</h2><p>${outbox?`${esc(outbox.state)} · ${esc(outbox.attempts)} attempt(s)`:'No email acknowledgment is queued.'}</p>${outbox&&['retry','needs_review'].includes(outbox.state)?`<form method="post" action="${BASE}/retry-receipt"><input type="hidden" name="id" value="${esc(id)}"><button type="submit">Retry receipt</button></form><p class="hint">Retries only the acknowledgment. Evidence processing and preserved originals are unchanged.</p>`:''}</section>`;
  const current=links.results.map(n=>`<li>${esc(noteLabel(n))} — ${n.shared_at?(n.note_shared_at?'Shared with this note’s authorized recipients':'Sharing approved, but the note is not currently shared'):'Private relationship'}${n.shared_at?`<form method="post" action="${BASE}/unshare-note"><input type="hidden" name="id" value="${esc(id)}"><input type="hidden" name="entry_id" value="${esc(n.entry_id)}"><button type="submit">Stop sharing this intake through this note</button></form>`:''}</li>`).join('');
  const select=notes.results.map(n=>`<option value="${esc(n.id)}">${esc(noteLabel(n)+' · '+(n.excerpt||''))}${n.shared_at?'':' (not shared)'}</option>`).join('');
  const sharing=`<section class="card"><h2>Relate to an existing Bench Note</h2><p>A relationship keeps the evidence intake separate from the authored note.</p>${current?`<ul>${current}</ul>`:'<p>No notes linked yet.</p>'}${select?`<form method="post" action="${BASE}/link-note"><input type="hidden" name="id" value="${esc(id)}"><label for="entry-id">Existing note</label><select name="entry_id" id="entry-id" required>${select}</select><p><button name="visibility" value="private" type="submit">Link privately</button></p><p>Sharing grants that note’s authorized recipients access to this complete intake: original email, every attachment, extracted text and transcripts.</p><label><input type="checkbox" name="approve_full_intake" value="yes"> I approve sharing this full intake with the selected note’s authorized recipients.</label><p><button name="visibility" value="shared" type="submit">Share full intake with this note</button></p></form>`:'<p>Create a Bench Note before linking evidence.</p>'}</section>`;
- const messages={'retry-queued':'Processing retry queued. Preserved originals remain available.','linked':'Private relationship saved.','shared':'Full intake sharing saved for the selected note.','unshared':'Sharing through this note has stopped. The private relationship remains.'};
- return `${Object.hasOwn(messages,notice)?`<p role="status">${messages[notice]}</p>`:''}${retry}${sharing}`;
+ const messages={'receipt-retry-queued':'Receipt retry queued. Preserved originals are unchanged.','retry-queued':'Processing retry queued. Preserved originals remain available.','linked':'Private relationship saved.','shared':'Full intake sharing saved for the selected note.','unshared':'Sharing through this note has stopped. The private relationship remains.'};
+ return `${Object.hasOwn(messages,notice)?`<p role="status">${messages[notice]}</p>`:''}${retry}${receiptRetry}${sharing}`;
 }
 
 async function handleOwnerAction(request,env,url,tail){
@@ -69,6 +71,15 @@ async function handleOwnerAction(request,env,url,tail){
  if(!/^(application\/x-www-form-urlencoded|multipart\/form-data)(?:;|$)/i.test(type))return response('Unsupported form type',415);
  const form=await request.formData();const id=String(form.get('id')||'');
  const record=await getEvidence(env,id);if(!record)return missing();
+ if(tail==='retry-receipt'){
+  const stamp=new Date().toISOString();
+  const results=await env.BENCH_NOTES.batch([
+   env.BENCH_NOTES.prepare("UPDATE evidence_receipt_outbox SET state='pending',attempts=0,available_at=?,updated_at=?,lease_until=NULL,error_code=NULL WHERE intake_id=? AND state IN ('retry','needs_review')").bind(stamp,stamp,id),
+   env.BENCH_NOTES.prepare("UPDATE evidence_intakes SET receipt_json=json_set(json_remove(COALESCE(receipt_json,'{}'),'$.email_acknowledgment_error'),'$.email_acknowledgment','queued') WHERE id=? AND EXISTS (SELECT 1 FROM evidence_receipt_outbox WHERE intake_id=? AND state='pending' AND updated_at=?)").bind(id,id,stamp)
+  ]);
+  if(!results[0].meta?.changes)return response('The receipt is already sent, queued or running, or no receipt exists.',409);
+  return Response.redirect(url.origin+link(id)+'?notice=receipt-retry-queued',303);
+ }
  if(tail==='retry'){
   const result=await env.BENCH_NOTES.prepare("UPDATE evidence_jobs SET state='pending',available_at=?,attempts=0,lease_until=NULL,error_code=NULL WHERE intake_id=? AND state IN ('done','retry','needs_review')").bind(new Date().toISOString(),id).run();
   if(!result.meta?.changes)return response('Processing is already queued or running, or no job exists.',409);
@@ -95,7 +106,7 @@ async function handleOwnerAction(request,env,url,tail){
 export async function handleEvidenceRoom(request,env,url){
  if(!await requireAccess(request,env))return response('Forbidden',403);
  const tail=url.pathname.slice(BASE.length).replace(/^\//,'');
- if(request.method==='POST' && ['retry','link-note','unshare-note'].includes(tail))return handleOwnerAction(request,env,url,tail);
+ if(request.method==='POST' && ['retry','retry-receipt','link-note','unshare-note'].includes(tail))return handleOwnerAction(request,env,url,tail);
  if(request.method!=='GET')return response('Method Not Allowed',405);
  if(!tail){
   const q=url.searchParams.get('q')||'';const rows=await listEvidence(env,{q,case_id:url.searchParams.get('case_id')||undefined});

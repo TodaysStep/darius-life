@@ -14,14 +14,14 @@ async function fixture(t){
  const token=data+'.'+Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',key.privateKey,new TextEncoder().encode(data))).toString('base64url');
  const previous=globalThis.fetch;globalThis.fetch=async()=>({ok:true,json:async()=>({keys:[jwk]})});t.after(()=>{globalThis.fetch=previous;resetCertsCacheForTests();});
  const db=new DatabaseSync(':memory:');
- for(const file of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql'])db.exec(readFileSync(new URL('../../shared/schema/'+file,import.meta.url),'utf8'));
+ for(const file of ['bench-notes.sql','bench-evidence.sql','bench-evidence-sharing.sql','bench-evidence-receipts.sql'])db.exec(readFileSync(new URL('../../shared/schema/'+file,import.meta.url),'utf8'));
  db.exec(`INSERT INTO cases(id,title) VALUES('case','Test');
  INSERT INTO docket_entries(id,case_id,case_label,entry_date,fact,shared_at,share_number) VALUES('note','case','Test case','2026-10-05','Existing authored note','t',2),('private-note','case','Test case','2026-10-05','Private note',NULL,NULL);
  INSERT INTO evidence_intakes(id,source_sha256,original_artifact_id,state,received_at,updated_at,subject) VALUES('intake','${HASH}','${HASH}','needs_review','t','t','Private subject');
  INSERT INTO evidence_jobs(id,intake_id,state,available_at,attempts,error_code) VALUES('job','intake','needs_review','t',5,'processing_failed');`);
  const context={claims:[{type:'hearing',value:'Hearing October 16',citations:[{artifact_id:HASH,page:2,quote:'Hearing on October 16.',source_layer:'extracted_text'}]}]};
  db.prepare('INSERT INTO evidence_context(intake_id,context_json,method,version,created_at,state) VALUES(?,?,?,?,?,?)').run('intake',JSON.stringify(context),'model','1','t','needs_review');
- const env={ACCESS_TEAM_DOMAIN:'test-team.example',ACCESS_AUD:'owner-aud',BENCH_NOTES:{prepare(sql){const stmt=db.prepare(sql);let args=[];return {bind(...values){args=values;return this;},async first(){return stmt.get(...args)||null;},async all(){return {results:stmt.all(...args)};},async run(){return {meta:{changes:stmt.run(...args).changes}};}};}}};
+ const env={ACCESS_TEAM_DOMAIN:'test-team.example',ACCESS_AUD:'owner-aud',BENCH_NOTES:{async batch(statements){db.exec('BEGIN');try{const results=[];for(const statement of statements)results.push(await statement.run());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}},prepare(sql){const stmt=db.prepare(sql);let args=[];return {bind(...values){args=values;return this;},async first(){return stmt.get(...args)||null;},async all(){return {results:stmt.all(...args)};},async run(){return {meta:{changes:stmt.run(...args).changes}};}};}}};
  const request=(path,{method='GET',form,origin=ORIGIN,auth=true}={})=>{const url=new URL(ORIGIN+'/bench/evidence/'+path);return handleEvidenceRoom(new Request(url,{method,headers:{...(auth?{'Cf-Access-Jwt-Assertion':token}:{}),...(origin?{Origin:origin}:{})},...(form?{body:new URLSearchParams(form)}:{})}),env,url);};
  return {db,request};
 }
@@ -58,4 +58,20 @@ test('retry visibly queues failed work without disrupting a running lease',async
  db.exec("UPDATE evidence_jobs SET state='running',lease_until='future'");
  assert.equal((await request('retry',{method:'POST',form:{id:'intake'}})).status,409);
  assert.equal(db.prepare('SELECT lease_until FROM evidence_jobs').get().lease_until,'future');
+});
+
+
+test('receipt recovery is separately authorized, resets failed outbox atomically and never resends sent or running work',async t=>{
+ const {request,db}=await fixture(t);
+ db.exec("INSERT INTO evidence_receipt_outbox(intake_id,state,attempts,available_at,created_at,updated_at,lease_until,error_code) VALUES('intake','needs_review',5,'t','t','t','old-lease','receipt_send_failed'); UPDATE evidence_intakes SET receipt_json='{\"email_acknowledgment\":\"needs_review\",\"email_acknowledgment_error\":\"receipt_send_failed\",\"original_preserved\":true}'");
+ assert.match(await (await request('intake')).text(),/Retry receipt/);
+ for(const options of [{auth:false},{origin:'https://attacker.example'},{origin:null}])assert.equal((await request('retry-receipt',{method:'POST',form:{id:'intake'},...options})).status,403);
+ assert.equal(db.prepare('SELECT attempts FROM evidence_receipt_outbox').get().attempts,5);
+ const before=db.prepare('SELECT original_artifact_id FROM evidence_intakes').get().original_artifact_id;
+ const res=await request('retry-receipt',{method:'POST',form:{id:'intake'}});assert.equal(res.status,303);assert.match(res.headers.get('location'),/notice=receipt-retry-queued/);
+ const outbox=db.prepare('SELECT * FROM evidence_receipt_outbox').get();assert.equal(outbox.state,'pending');assert.equal(outbox.attempts,0);assert.equal(outbox.lease_until,null);assert.equal(outbox.error_code,null);
+ const receipt=JSON.parse(db.prepare('SELECT receipt_json FROM evidence_intakes').get().receipt_json);assert.equal(receipt.email_acknowledgment,'queued');assert.equal(receipt.email_acknowledgment_error,undefined);assert.equal(receipt.original_preserved,true);
+ assert.equal(db.prepare('SELECT original_artifact_id FROM evidence_intakes').get().original_artifact_id,before);
+ assert.equal(db.prepare('SELECT state FROM evidence_jobs').get().state,'needs_review');
+ for(const state of ['pending','sent','running']){db.prepare('UPDATE evidence_receipt_outbox SET state=?,lease_until=?').run(state,'live-lease');assert.equal((await request('retry-receipt',{method:'POST',form:{id:'intake'}})).status,409);assert.equal(db.prepare('SELECT lease_until FROM evidence_receipt_outbox').get().lease_until,'live-lease');assert.doesNotMatch(await (await request('intake')).text(),/>Retry receipt</);}
 });

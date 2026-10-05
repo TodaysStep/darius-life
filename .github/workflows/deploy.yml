@@ -10,7 +10,18 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
+  evidence-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - name: Verify evidence preservation and authorization
+        run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs
   build:
+    needs: evidence-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci
       - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

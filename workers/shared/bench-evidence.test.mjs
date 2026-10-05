@@ -67,7 +67,7 @@ test('context rejects invented citations and requires both sources for proposed 
  const context=validateEvidenceContext({claims:[
  {type:'hearing',value:'Source says October 16',citations:[{source_id:'new',quote:'Hearing October 16, 2026.'}]},
  {type:'deadline',value:'Invented deadline',citations:[{source_id:'new',quote:'Deadline October 20'}]},
- {type:'possible_contradiction',value:'Two dates differ',citations:[{source_id:'new',quote:'Hearing October 16, 2026.'},{source_id:'old',quote:'Hearing October 14, 2026.'}]},
+ {type:'possible_contradiction',value:'Two dates differ',shared_subject:'Hearing October',citations:[{source_id:'new',quote:'Hearing October 16, 2026.'},{source_id:'old',quote:'Hearing October 14, 2026.'}]},
  {type:'possible_contradiction',value:'Unsupported comparison',citations:[{source_id:'new',quote:'Hearing October 16, 2026.'}]},
  {type:'diagnosis',value:'Not allowed',citations:[{source_id:'new',quote:'Hearing October 16, 2026.'}]}
  ]},sources);
@@ -125,4 +125,18 @@ test('arrival context rejects unrelated historical people, dates and invented co
   {type:'hearing',value:'Hearing October 16, 2026',citations:[quote('real','Hearing October 16, 2026.')]}
  ];
  const result=validateEvidenceContext({claims},sources);assert.equal(result.claims.length,2);assert.deepEqual(result.claims.map(c=>c.type),['court','hearing']);
+});
+test('semantic result limit caps returned items without shrinking candidate coverage',async()=>{
+ const {env}=setup();await acceptEvidenceEmail(message(email('first matching intake')),env);await acceptEvidenceEmail(message(email('second matching intake')),env);await runEvidenceJobs(env,{limit:2});
+ env.AI.run=async(_model,input)=>{const {sources}=JSON.parse(input.messages[1].content);return {response:{matches:sources.filter(s=>s.source_id.startsWith('email:')).map(s=>({source_id:s.source_id,quote:s.text}))}};};
+ const result=await semanticEvidenceSearch(env,{semantic_query:'Find matching evidence',limit:1});
+ assert.equal(result.items.length,1);assert.equal(result.retrieval.candidates,2);assert.equal(result.retrieval.candidate_limit,30);assert.equal(result.retrieval.matches,2);assert.equal(result.retrieval.results_truncated,true);assert.equal(result.retrieval.result_limit,1);
+});
+test('self-identified synthetic fixtures cannot contradict the real docket',()=>{
+ const sources=[
+  {id:'new',artifact_id:'safe-test',text:'SYNTHETIC TEST EVIDENCE. This is not a court filing or witness evidence. Case 26FDV03796S.',layer:'source_communication'},
+  {id:'old',docket_entry_id:'real-docket',text:'Case 26FDV03796S is a court matter involving Mary Ann Rahimpour.',layer:'existing_register_entry'}
+ ];
+ const result=validateEvidenceContext({claims:[{type:'possible_contradiction',value:'Court matter involvement differs',shared_subject:'26FDV03796S',citations:[{source_id:'new',quote:sources[0].text},{source_id:'old',quote:sources[1].text}]}]},sources);
+ assert.equal(result.claims.length,0);assert.equal(result.test_evidence_detected,true);assert.equal(result.evidence_classification,'source_declares_synthetic_test_evidence');
 });
