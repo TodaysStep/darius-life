@@ -21,7 +21,7 @@ main = "src/index.js"
 compatibility_date = "2026-09-28"
 
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["* * * * *"]
 
 [[routes]]
 pattern = "confidential.darius.life"
