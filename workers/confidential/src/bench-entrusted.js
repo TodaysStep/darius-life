@@ -1,19 +1,14 @@
-// confidential.darius.life/entrusted/* — Bench Notes entrusted side (the section for everybody else; the working side, /bench/*, is Darius's own). Documents and
-// shared timeline entries, manually shared, one universal passphrase per
-// grant, revocable. This is a SIBLING path to /bench/*, not a subpath of it,
-// on the same hostname and Worker as the working side. This module never queries cases, patterns, or
-// glossary_terms at all, and its only access to docket_entries is through
-// listSharedEntries in workers/shared/bench-entrusted-view.js — a single
-// hardcoded query that can only ever return fact/entry_date for entries
-// Darius has explicitly shared, never recommended_direction, commentary, or
-// court_takeaways. The rendering itself (renderEntrustedView) is the exact
-// same function the working side's preview calls, so a preview can never
-// drift from what a real guest sees. There is no Cloudflare Access gate
-// here: guests have no Access identity, so this module is its own complete
-// authentication boundary.
+// Entrusted access is an independent passphrase boundary, never Cloudflare
+// Access. Every original-evidence request rechecks the active grant, shared
+// entry scope, explicit intake sharing and artifact membership. Private docket
+// interpretation layers and private document recordings are never rendered.
 import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex, signSession, verifySession } from "../../shared/bench-crypto.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
+
+import { renderEvidenceText, renderEvidenceAudio, renderEvidenceTranscript } from "../../shared/bench-rich-text.js";
+import { getEvidence } from "../../shared/bench-evidence.js";
+import { evidenceFileResponse } from "../../shared/evidence-file-response.js";
 
 export const PREFIX = "/entrusted/";
 const COOKIE_NAME = "bench_entrusted_session";
@@ -35,9 +30,7 @@ function setCookieHeader(value, maxAgeSeconds) {
   return `${COOKIE_NAME}=${value}; Path=${PREFIX}; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
 }
 
-// --- D1 access — access_grants is the only table this file itself ever
-// queries; documents/entrusted_notes/docket_entries all go through the
-// shared, hardcoded query functions imported above. ---
+// --- Grant and explicitly shared evidence access ---
 
 async function getGrant(env, id) {
   return env.BENCH_NOTES.prepare("SELECT * FROM access_grants WHERE id = ?").bind(id).first();
@@ -133,14 +126,66 @@ function documentGuestHref(d) {
   return `${PREFIX}documents/${d.id}/file`;
 }
 
-function renderPortal(documents, notes, entries) {
+function renderPortal(documents, notes, entries, evidenceHtml = "", number = null) {
   return benchPage(
-    "Bench Notes — Entrusted access",
-    `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Entrusted access</span></h1></header>
+    number == null ? "Bench Notes — Entrusted access" : `Bench Note ${noteNumber(number)}`,
+    `<header class="bench-header">${STENOTYPE_ICON()}<h1>${number == null ? "Bench Notes" : `Bench Note ${noteNumber(number)}`}<span class="tag">Entrusted access</span></h1></header>
 ${renderEntrustedView(documents, notes, entries, { documentHref: documentGuestHref })}
+${evidenceHtml}
 <div class="ticker"></div>
 <form method="post" action="${PREFIX}logout"><button type="submit">Sign out</button></form>`,
   );
+}
+
+const parseJson = (value, fallback = {}) => { try { return JSON.parse(value) || fallback; } catch { return fallback; } };
+const evidenceHref = (entryId, intakeId, hash) => `${PREFIX}evidence/${encodeURIComponent(entryId)}/${encodeURIComponent(intakeId)}/${encodeURIComponent(hash)}`;
+
+function renderSharedIntake(entryId, record) {
+  const { intake, parts, derivations } = record;
+  const original = evidenceHref(entryId, intake.id, intake.original_artifact_id);
+  const attachments = parts.map(part => {
+    const href = evidenceHref(entryId, intake.id, part.artifact_id);
+    const derived = derivations.filter(d => d.artifact_id === part.artifact_id).map(d => {
+      const provenance = parseJson(d.provenance_json);
+      const body = d.kind === "transcript"
+        ? renderEvidenceTranscript({ text: d.text_content, source: "auto", segments: (Array.isArray(provenance.segments) ? provenance.segments : []).map(segment => ({speaker: segment.speaker, timestamp: segment.start == null ? null : `${segment.start}s`, text: segment.text})) })
+        : renderEvidenceText(d.text_content);
+      return `<section><h3>${d.kind === "transcript" ? "Derived transcript" : "Derived text"}</h3><p class="hint">${escapeHtml(d.method)} · ${escapeHtml(d.version)}${provenance.ocr_status ? ` · ${escapeHtml(provenance.ocr_status)}` : ""}</p>${body}<details><summary>Source and derivation</summary><p>SHA-256 ${escapeHtml(part.sha256)}</p>${renderEvidenceText(JSON.stringify(provenance, null, 2))}</details></section>`;
+    }).join("\n");
+    const media = /^audio\//.test(part.mime_type)
+      ? renderEvidenceAudio({ href, title: part.filename })
+      : /^image\/(png|jpeg|webp|gif)$/.test(part.mime_type) ? `<img src="${escapeHtml(href)}" alt="${escapeHtml(part.filename)}" style="max-width:100%;height:auto">` : "";
+    return `<article class="card"><h3>${escapeHtml(part.filename)}</h3><p>${escapeHtml(part.mime_type)} · ${escapeHtml(part.byte_size)} bytes · ${escapeHtml(part.state)}</p><p><a href="${escapeHtml(href)}">Open original</a> · <a href="${escapeHtml(href)}?download=1">Download original</a></p>${media}${derived || "<p>Derived text is unavailable; the preserved original remains available.</p>"}</article>`;
+  }).join("\n");
+  return `<section class="shared-intake"><h2>Shared evidence intake</h2><p>${escapeHtml(intake.subject || "Email")}</p><dl><dt>From</dt><dd>${escapeHtml(intake.envelope_from)}</dd><dt>Received</dt><dd>${escapeHtml(intake.received_at)}</dd><dt>Source message date</dt><dd>${escapeHtml(intake.sent_at || "Unknown")}</dd></dl><p><a href="${escapeHtml(original)}">Download original email</a></p><h3>Email communication</h3>${renderEvidenceText(intake.body_text || "The preserved original contains the communication.")}${attachments}</section>`;
+}
+
+async function renderLinkedIntakes(env, entryId) {
+  const { results } = await env.BENCH_NOTES.prepare("SELECT intake_id FROM evidence_note_links WHERE entry_id = ? AND shared_at IS NOT NULL").bind(entryId).all();
+  const sections = [];
+  for (const link of results) {
+    const record = await getEvidence(env, link.intake_id);
+    if (record) sections.push(renderSharedIntake(entryId, record));
+  }
+  return sections.join("\n");
+}
+
+async function handleSharedEvidenceFile(request, env, match) {
+  const session = await verifySession(readCookie(request, COOKIE_NAME), env.ENTRUSTED_COOKIE_SECRET);
+  if (!session) return notFound();
+  const grant = await getGrant(env, session.gid);
+  const entry = await getSharedEntryForGrant(env, grant, match[1]);
+  if (!entry) return notFound();
+  const link = await env.BENCH_NOTES.prepare("SELECT intake_id FROM evidence_note_links WHERE entry_id = ? AND intake_id = ? AND shared_at IS NOT NULL").bind(entry.id, match[2]).first();
+  if (!link) return notFound();
+  const record = await getEvidence(env, link.intake_id);
+  if (!record) return notFound();
+  const part = record.parts.find(p => p.artifact_id === match[3]);
+  const email = record.intake.original_artifact_id === match[3];
+  if (!email && !part) return notFound();
+  const artifact = await env.BENCH_NOTES.prepare("SELECT * FROM evidence_artifacts WHERE id = ?").bind(match[3]).first();
+  if (!artifact) return notFound();
+  return evidenceFileResponse(request, env, artifact, { mimeType: email ? "message/rfc822" : part.mime_type, filename: email ? "original.eml" : part.filename });
 }
 
 // --- Routing ---
@@ -176,6 +221,8 @@ export async function handleBenchEntrustedGet(request, env, url) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="447" height="447" viewBox="0 0 447 447"><rect width="447" height="447" fill="white"/><image href="/entrusted/stenotype.jpg?v=20261004-3" x="0" y="0" width="447" height="447" preserveAspectRatio="xMidYMid meet"/></svg>`;
     return new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400, immutable", "x-robots-tag": "noindex, nofollow" } });
   }
+  const evidenceMatch = path.match(/^evidence\/([^/]+)\/([^/]+)\/([a-f0-9]{64})$/);
+  if (evidenceMatch) return handleSharedEvidenceFile(request, env, evidenceMatch);
   const fileMatch = path.match(/^documents\/([^/]+)\/file$/);
   if (fileMatch) {
     const token = readCookie(request, COOKIE_NAME);
@@ -185,13 +232,8 @@ export async function handleBenchEntrustedGet(request, env, url) {
     if (!doc || doc.storage_kind !== "upload") return notFound();
     const object = await env.BENCH_DOCUMENTS.get(doc.storage_ref);
     if (!object) return notFound();
-    return new Response(object.body, {
-      headers: {
-        "content-type": object.httpMetadata?.contentType || "application/octet-stream",
-        "content-disposition": `inline; filename="${doc.title.replace(/"/g, "")}"`,
-        "cache-control": "private, no-store",
-      },
-    });
+    const size = object.size ?? (await object.arrayBuffer()).byteLength;
+    return evidenceFileResponse(request, env, { object_key: doc.storage_ref, byte_size: size }, { mimeType: object.httpMetadata?.contentType || "application/octet-stream", filename: doc.title });
   }
 
   const noteLink = path.match(/^([^/]+)(?:\/note\/([^/]+))?$/);
@@ -214,12 +256,12 @@ export async function handleBenchEntrustedGet(request, env, url) {
     if (!session || session.gid !== grant.id) return html(renderEnvelope(grant, entry));
 
     const caseIds = JSON.parse(grant.case_ids_json || "[]");
-    const [documents, notes, entries] = await Promise.all([
+    const [documents, entries, evidenceHtml] = await Promise.all([
       listSharedDocuments(env.BENCH_NOTES, caseIds),
-      listNotesForCases(env.BENCH_NOTES, caseIds),
       listSharedEntries(env.BENCH_NOTES, caseIds),
+      renderLinkedIntakes(env, entry.id),
     ]);
-    return html(renderPortal(documents, notes, entries));
+    return html(renderPortal(documents.filter(d => d.entry_id === entry.id), [], entries.filter(e => e.id === entry.id), evidenceHtml, entry.share_number));
   }
 
   if (path !== "") return notFound();
@@ -279,14 +321,14 @@ export async function handleBenchEntrustedPost(request, env, url) {
     const token = await signSession({ gid: grant.id }, env.ENTRUSTED_COOKIE_SECRET, SESSION_TTL_SECONDS);
     return new Response(null, {
       status: 303,
-      headers: { location: `https://darius.life${PREFIX}`, "set-cookie": setCookieHeader(token, SESSION_TTL_SECONDS) },
+      headers: { location: `${url.origin}${PREFIX}`, "set-cookie": setCookieHeader(token, SESSION_TTL_SECONDS) },
     });
   }
 
   if (path === "logout") {
     return new Response(null, {
       status: 303,
-      headers: { location: `https://darius.life${PREFIX}`, "set-cookie": setCookieHeader("", 0) },
+      headers: { location: `${url.origin}${PREFIX}`, "set-cookie": setCookieHeader("", 0) },
     });
   }
 

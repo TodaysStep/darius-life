@@ -20,6 +20,9 @@ name = "darius-life-confidential"
 main = "src/index.js"
 compatibility_date = "2026-09-28"
 
+[triggers]
+crons = ["*/2 * * * *"]
+
 [[routes]]
 pattern = "confidential.darius.life"
 custom_domain = true

@@ -1,3 +1,4 @@
+import { renderEvidenceText } from '../../shared/bench-rich-text.js';
 // confidential.darius.life/bench/* — Bench Notes working side. Darius's own
 // private docket: cases, dated timeline entries carrying four simultaneous
 // layers (fact, recommended direction, his commentary, court takeaways), a
@@ -302,6 +303,7 @@ function renderCaseList(cases, grants, grantSummaries, upcomingByCase, dailyVers
   return benchPage(
     "Bench Notes",
     `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Notes<span class="tag">Working docket — private</span></h1></header>
+<p><a href="/bench/evidence">Evidence room — email intake and originals</a></p>
 ${renderDailyVerseCard(dailyVerse)}
 <p class="hint">Your own case timelines. Nothing here is visible to anyone on the entrusted side unless you explicitly share a document.</p>
 <p class="note"><a href="${PREFIX}prep">Hearing &amp; presentation prep &rarr;</a> · <a href="${PREFIX}scripture">Scripture &rarr;</a> · <a href="${PREFIX}resources">Resources — self-help, legal aid, advocacy contacts &rarr;</a> · <a href="${PREFIX}search">Search everything &rarr;</a></p>
@@ -367,7 +369,7 @@ ${options}
 }
 
 function renderEntry(base, e, attachedDocs) {
-  const layer = (name, value) => (value ? `<div class="entry-layer"><span class="layer-name">${name}</span>${escapeHtml(value)}</div>` : "");
+  const layer = (name, value) => (value ? `<div class="entry-layer"><span class="layer-name">${name}</span>${renderEvidenceText(value)}</div>` : "");
   const shared = Boolean(e.shared_at);
   const toggleAction = `${base}/entries/${escapeHtml(e.id)}/${shared ? "unshare" : "share"}`;
   const editAction = `${base}/entries/${escapeHtml(e.id)}/edit`;
@@ -378,7 +380,7 @@ function renderEntry(base, e, attachedDocs) {
   const kindTag = e.entry_kind && e.entry_kind !== "note" ? `<span class="status">${escapeHtml(e.entry_kind)}</span>` : "";
   return `<div class="card">
 <div class="case-row"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${kindTag}${autoTag}${shared ? `shared ${escapeHtml(e.shared_at)}` : "not shared"} · <form style="display:inline" method="post" action="${toggleAction}"><button type="submit">${shared ? "Unshare" : "Share"}</button></form></span></div>
-<div class="entry-layer"><span class="layer-name">Fact</span>${escapeHtml(e.fact)}</div>
+<div class="entry-layer"><span class="layer-name">Fact</span>${renderEvidenceText(e.fact)}</div>
 ${layer("Recommended direction", e.recommended_direction)}
 ${layer("Commentary", e.commentary)}
 ${layer("Court takeaways", e.court_takeaways)}
@@ -488,7 +490,7 @@ function renderTranscript(base, r) {
   if (!r.audio_storage_ref) return "";
   if (r.transcript) {
     const tag = r.transcript_source === "manual" ? "" : `<span class="status">auto-transcribed</span>`;
-    return `<div class="entry-layer"><span class="layer-name">Transcript</span>${tag}${escapeHtml(r.transcript)}</div>
+    return `<div class="entry-layer"><span class="layer-name">Transcript</span>${tag}${renderEvidenceText(r.transcript)}</div>
 <details><summary>Correct this transcript</summary>
 <form method="post" action="${base}/recordings/${escapeHtml(r.id)}/edit">
 <textarea name="transcript" required>${escapeHtml(r.transcript)}</textarea>
@@ -534,7 +536,7 @@ function renderRecordingRow(base, r, { affectedDocuments = [], relatedEntry = nu
   const affectedLine = affectedDocuments.length
     ? `<p class="hint">Also affects: ${affectedDocuments.map((d) => `<a href="${PREFIX}documents/${escapeHtml(d.id)}">${escapeHtml(d.title)}</a>`).join(", ")}</p>`
     : "";
-  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${contentTag}${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : ""}${audio}
+  return `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${contentTag}${r.body ? `<div class="entry-layer">${renderEvidenceText(r.body)}</div>` : ""}${audio}
 ${renderTranscript(base, r)}
 ${relatedLine}${affectedLine}
 <form method="post" action="${base}/recordings/${escapeHtml(r.id)}/delete"><button type="submit">Delete</button></form>
@@ -548,7 +550,7 @@ function renderAffectingRecordings(affectingRecordings, documentTitleById) {
   if (!affectingRecordings.length) return "";
   return `<h3>Also mentioned in</h3>
 <p class="hint">Voice notes filed under another document in this case that named this one as also affected.</p>
-${affectingRecordings.map((r) => `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span><span class="status">${escapeHtml(r.content_type)}</span>${r.body ? `<div class="entry-layer">${escapeHtml(r.body)}</div>` : r.transcript ? `<div class="entry-layer">${escapeHtml(r.transcript)}</div>` : ""}<p class="hint">From <a href="${PREFIX}documents/${escapeHtml(r.document_id)}">${escapeHtml(documentTitleById.get(r.document_id) || "another document")}</a></p></div>`).join("\n")}`;
+${affectingRecordings.map((r) => `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span><span class="status">${escapeHtml(r.content_type)}</span>${r.body ? `<div class="entry-layer">${renderEvidenceText(r.body)}</div>` : r.transcript ? `<div class="entry-layer">${renderEvidenceText(r.transcript)}</div>` : ""}<p class="hint">From <a href="${PREFIX}documents/${escapeHtml(r.document_id)}">${escapeHtml(documentTitleById.get(r.document_id) || "another document")}</a></p></div>`).join("\n")}`;
 }
 
 // Filing/service is a record of what Darius has actually done, never a
@@ -853,7 +855,7 @@ function renderPrepDetail(session, { caseRow = null, patterns = [], entries = []
     ? patterns.map((p) => `<div class="card"><strong>${escapeHtml(p.subject_name)}</strong> <span class="hint">(${escapeHtml(p.subject_type)})</span><div>${escapeHtml(p.description)}</div></div>`).join("\n")
     : "";
   const entryRows = entries.length
-    ? entries.map((e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${escapeHtml(e.entry_kind)}</span><div class="entry-layer">${escapeHtml(e.fact)}</div></div>`).join("\n")
+    ? entries.map((e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span><span class="status">${escapeHtml(e.entry_kind)}</span><div class="entry-layer">${renderEvidenceText(e.fact)}</div></div>`).join("\n")
     : "";
   const pressureTestBlock = session.pressure_test
     ? `<div class="card"><h3>Pressure test</h3><div class="entry-layer">${escapeHtml(session.pressure_test).replace(/\n/g, "<br>")}</div><p class="hint">Generated ${escapeHtml(session.pressure_test_updated_at || "")}</p></div>`
@@ -990,7 +992,7 @@ ${form}`);
 
   const body = [
     section("Cases", results.cases, (c) => `<div class="case-row"><a href="${PREFIX}case/${escapeHtml(c.id)}">${escapeHtml(c.title)}</a><span class="status">${escapeHtml(c.status)}${c.case_number ? ` · ${escapeHtml(c.case_number)}` : ""}</span></div>`),
-    section("Timeline entries", results.entries, (e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span>${e.entry_kind && e.entry_kind !== "note" ? `<span class="status">${escapeHtml(e.entry_kind)}</span>` : ""}<div class="entry-layer">${escapeHtml(e.fact)}</div><p class="hint">${escapeHtml(e.case_title || "")} · <a href="${PREFIX}case/${escapeHtml(e.case_id)}">Open case</a></p></div>`),
+    section("Timeline entries", results.entries, (e) => `<div class="card"><span class="entry-date">${escapeHtml(e.entry_date)}</span>${e.entry_kind && e.entry_kind !== "note" ? `<span class="status">${escapeHtml(e.entry_kind)}</span>` : ""}<div class="entry-layer">${renderEvidenceText(e.fact)}</div><p class="hint">${escapeHtml(e.case_title || "")} · <a href="${PREFIX}case/${escapeHtml(e.case_id)}">Open case</a></p></div>`),
     section("Documents", results.documents, (d) => `<div class="case-row"><a href="${PREFIX}documents/${escapeHtml(d.id)}">${escapeHtml(d.title)}</a><span class="status">${escapeHtml(d.case_title || "")}</span></div>`),
     section("Voice notes &amp; recordings", results.recordings, (r) => `<div class="card"><span class="entry-date">${escapeHtml(r.noted_at)}</span>${r.content_type && r.content_type !== "note" ? `<span class="status">${escapeHtml(r.content_type)}</span>` : ""}${r.body ? `<div class="entry-layer">${escapeHtml(truncate(r.body, 200))}</div>` : ""}${r.transcript ? `<div class="entry-layer">${escapeHtml(truncate(r.transcript, 200))}</div>` : ""}<p class="hint"><a href="${PREFIX}documents/${escapeHtml(r.document_id)}">${escapeHtml(r.document_title || "document")}</a> · ${escapeHtml(r.case_title || "")}</p></div>`),
     section("Glossary", results.glossary, (g) => `<div class="card"><strong>${escapeHtml(g.term)}</strong><div>${escapeHtml(g.definition)}</div></div>`),

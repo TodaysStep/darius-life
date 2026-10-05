@@ -32,19 +32,18 @@ export async function signSession(payload, secret, ttlSeconds) {
 
 // Verifies signature and expiry. Returns the decoded payload, or null.
 export async function verifySession(token, secret) {
-  if (!token) return null;
+  if (typeof token !== "string" || !token || !secret) return null;
   const parts = token.split(".");
-  if (parts.length !== 2) return null;
+  if (parts.length !== 2 || !parts.every(p => /^[A-Za-z0-9_-]+$/.test(p))) return null;
   const [bodyB64, sigB64] = parts;
-  const key = await hmacKey(secret);
-  const ok = await crypto.subtle.verify("HMAC", key, b64urlToBytes(sigB64), new TextEncoder().encode(bodyB64));
-  if (!ok) return null;
-  let payload;
   try {
-    payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(bodyB64)));
+    const key = await hmacKey(secret);
+    const ok = await crypto.subtle.verify("HMAC", key, b64urlToBytes(sigB64), new TextEncoder().encode(bodyB64));
+    if (!ok) return null;
+    const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(bodyB64)));
+    if (!payload || typeof payload !== "object" || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+    return payload;
   } catch {
     return null;
   }
-  if (typeof payload.exp !== "number" || payload.exp < Math.floor(Date.now() / 1000)) return null;
-  return payload;
 }

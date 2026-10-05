@@ -27,6 +27,9 @@ export const STENOTYPE_ICON = (size = 96) =>
 
 const STYLE = `
 :root { color-scheme: light; }
+.evidence-text { font-family: Georgia, serif; line-height: 1.6; overflow-wrap: anywhere; }
+.evidence-text blockquote { border-left: 3px solid #a88642; margin-left: 0; padding-left: 1rem; }
+.evidence-text p { margin: .6em 0; }
 html {
   background: #E9E0CC;
   color: #2A2318;
