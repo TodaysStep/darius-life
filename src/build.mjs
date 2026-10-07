@@ -151,7 +151,7 @@ export async function build() {
 
   const body = [
     "<header>",
-    renderItem(bySection("identity")[0], ctx),
+    ...bySection("identity").map((item) => renderItem(item, ctx)),
     `<div class="indicators" data-section="status">\n${bySection("status").map((i) => renderItem(i, ctx)).join("\n")}\n</div>`,
     `<div data-section="resume">\n${renderSectionItems(bySection("resume"), ctx)}\n</div>`,
     "</header>",

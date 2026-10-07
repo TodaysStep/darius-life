@@ -1,0 +1,15 @@
+.resume-page { max-width: 960px; margin: auto; padding: 48px 24px 64px; }
+.resume-page nav { margin-bottom: 48px; }
+.eyebrow, .dates, figcaption { font-size: .8em; letter-spacing: .06em; }
+.resume-page h1 { font-family: Georgia, serif; font-size: clamp(2.2rem, 6vw, 4.5rem); line-height: 1.08; max-width: 18ch; margin: .3em 0 .55em; }
+.intro { max-width: 66ch; }
+figure { margin: 40px 0; }
+figure img { display: block; width: 100%; height: auto; }
+figcaption { margin-top: 12px; }
+.career { list-style: none; padding: 0; }
+.career li { border-left: 1px solid #111111; padding: 0 0 24px 24px; margin: 0; }
+.career h3 { margin-top: 0; }
+.ventures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+.resume-page footer { border-top: 1px solid #111111; padding-top: 24px; }
+@media (max-width: 640px) { .ventures { grid-template-columns: 1fr; gap: 0; } .resume-page { padding: 28px 20px 48px; } }
+@media print { .resume-page nav, .resume-page footer a { display: none; } figure { break-inside: avoid; } }
