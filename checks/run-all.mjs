@@ -23,7 +23,7 @@ const rel = (p) => path.relative(ROOT, p);
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const readJSON = (p) => JSON.parse(read(p));
 
-const REQUIRED = `identity, status.nws, status.personal, status.line, resume, terms, terms.status,
+const REQUIRED = `identity, status.nws, status.personal, status.line, terms, terms.status,
 notes.todays-notes, notes.todays-step, notes.founder-notes, notes.line,
 legal.blurb, legal.private-login, legal.scenic-drive, legal.trademarks,
 legal.pe-act, legal.pro, legal.pro-policy, legal.correspondence, legal.li-privacy,
@@ -43,7 +43,7 @@ footer.press, footer.updated, footer.copyright`
   .split(/[\s,]+/)
   .filter(Boolean);
 
-const PAGE_ORDER = ["identity", "status", "resume", "terms", "notes", "legal", "projects", "help", "writing", "footer"];
+const PAGE_ORDER = ["identity", "status", "terms", "notes", "legal", "projects", "help", "writing", "footer"];
 
 // The exact status-LED colours used in src/styles.css — kept here too so check 14
 // can allow precisely these and nothing else.

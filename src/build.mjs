@@ -153,7 +153,6 @@ export async function build() {
     "<header>",
     ...bySection("identity").map((item) => renderItem(item, ctx)),
     `<div class="indicators" data-section="status">\n${bySection("status").map((i) => renderItem(i, ctx)).join("\n")}\n</div>`,
-    `<div data-section="resume">\n${renderSectionItems(bySection("resume"), ctx)}\n</div>`,
     "</header>",
     "<main>",
     ...["terms", "notes", "legal", "projects", "help", "writing"].map(section),

@@ -2,7 +2,6 @@
   "sections": [
     { "id": "identity" },
     { "id": "status" },
-    { "id": "resume" },
     { "id": "terms", "heading": "HOW TO USE DARIUS.LIFE" },
     { "id": "notes", "heading": "NOTES" },
     { "id": "legal", "heading": "LEGAL" },
@@ -18,7 +17,6 @@
     { "id": "status.nws", "section": "status", "kind": "indicator", "icon": "lock", "label": "New Work Security Protection", "href": "https://newworksecurity.com", "note": " — Always On\nHelps keep your work, context, and return intact.\nA core protection of Living Instruments. Cannot be disabled.", "sha256": "392aa15af968ddedeb9d658ade841a2d6a89a02e0f34a512a659a276e61b0979" },
     { "id": "status.personal", "section": "status", "kind": "indicator", "label": "Status:", "dynamic": "status", "sha256": "755c8b2a9fb114460e0909ab65c8cd47696b7648cbcdad3dbccd937c40660d0f" },
     { "id": "status.line", "section": "status", "kind": "text", "text": "A status is a personal update, not a service notice or a promise of availability.", "sha256": "e4004d7d92fa9a62ad73c0f6ab37edbb6eed5e8595ab114c4e1da7e838e296f3" },
-    { "id": "resume", "section": "resume", "kind": "prose", "source": "content/resume.md", "sha256": "9ba480a17d1e56136574ed14d9ea4c90db1efa7130da3b7448e3bff91a9af98f" },
     { "id": "terms", "section": "terms", "kind": "prose", "source": "content/terms.md", "effective": "2026-09-27", "sha256": "c030312b74e8e4aa18f82ff26a085f76840f5b00edc9b92f479012771ece98ab" },
     { "id": "terms.status", "section": "terms", "kind": "block", "label": "STATUS", "source": "content/status-boundary.md", "sha256": "7d04a31ba834cd1a83dbc7cac4e14e2c29351e18fcebe9288a3210b22ca09f3e" },
     { "id": "notes.todays-notes", "section": "notes", "kind": "entry", "label": "Today's Notes", "href": "https://todaysnotes.com", "note": "What I notice, make, and keep, on my own terms.", "sha256": "4133e0d49b3f4db9f6442f2be75d142121f0e8b4326347d1b363f12c8ae7dfaa" },
