@@ -18,3 +18,10 @@ figcaption { margin-top: 12px; }
 .flight-plan-image-link { position: absolute; left: 0; right: 0; bottom: 0; height: 9%; display: block; }
 .flight-plan-image-link:focus-visible { outline: 2px solid #111111; outline-offset: 3px; }
 @media print { .flight-plan-image-link { display: none; } }
+
+/* Let both illustrated pages use the full screen; keep captions with the text. */
+@media screen {
+  .resume-page figure { width: 100vw; max-width: none; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); }
+  .resume-page figure > a { display: block; }
+  .resume-page figcaption { max-width: 960px; margin: 12px auto 0; padding: 0 24px; }
+}
