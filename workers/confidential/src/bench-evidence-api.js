@@ -1,4 +1,5 @@
-import {listEvidence,getEvidence,semanticEvidenceSearch} from '../../shared/bench-evidence.js';
+import {literalPattern,syntheticSourceSQL,realMetadataSQL,readCursor,finishPage} from '../../shared/bench-retrieval-page.js';
+import {listEvidence,listEvidencePage,getEvidence,semanticEvidenceSearch} from '../../shared/bench-evidence.js';
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json','cache-control':'private, no-store','x-robots-tag':'noindex, nofollow','x-content-type-options':'nosniff'}});
 async function authorized(request,env){
  const key=env.BENCH_RETRIEVAL_KEY;if(!key)return false;
@@ -11,18 +12,33 @@ async function authorized(request,env){
 function labelNote(row) {
  return {...row,record_kind:'authored_bench_note',source_class:row.source==='manual'?'founder_authored_record':'derived_register_record',source_url:`https://confidential.darius.life/bench/case/${encodeURIComponent(row.case_id)}`,provenance:{table:'docket_entries',id:row.id,source:row.source,ingest_item_id:row.ingest_item_id||null,original_artifact_hash:null},interpretation_fields:['commentary','recommended_direction','court_takeaways'],warning:'The fact field is a recorded statement, not independent verification. Original artifact hash unknown unless linked evidence supplies it.'};
 }
-export async function searchAuthoredNotes(env,filters={}) {
- const clauses=[],args=[];
- if(filters.q){clauses.push('(fact LIKE ? OR commentary LIKE ? OR court_takeaways LIKE ? OR case_label LIKE ?)');args.push(...Array(4).fill('%'+String(filters.q).slice(0,300)+'%'));}
+export async function searchAuthoredNotes(env,filters={}) {return (await searchAuthoredNotesPage(env,filters)).items;}
+export async function searchAuthoredNotesPage(env,filters={}) {
+ const unsupported=['document','person','state','type','evidence_type','email','collection_id'].filter(key=>filters[key]);
+ if(unsupported.length)return {items:[],retrieval:{method:'not_searched',state:'unsupported_filters',unsupported_filters:unsupported,warning:'Authored notes omitted because these intake filters cannot be applied to authored notes.',semantic:false,complete_corpus:false}};
+ const clauses=['NOT '+syntheticSourceSQL('source')],args=[];
+ const cursor=readCursor(filters.note_cursor,'notes',filters);
+ if(cursor){clauses.push('(created_at<? OR (created_at=? AND id<?))');args.push(cursor.time,cursor.time,cursor.id);}
+ if(filters.q){clauses.push(`(fact LIKE ? ESCAPE '\\' OR commentary LIKE ? ESCAPE '\\' OR court_takeaways LIKE ? ESCAPE '\\' OR case_label LIKE ? ESCAPE '\\')`);args.push(...Array(4).fill(literalPattern(filters.q)));}
  if(filters.case_id){clauses.push('case_id=?');args.push(filters.case_id);}
  if(filters.bench_note){clauses.push('share_number=?');args.push(Number(filters.bench_note));}
  if(filters.from){clauses.push('created_at>=?');args.push(filters.from);}
  if(filters.to){clauses.push('created_at<=?');args.push(filters.to);}
- const r=await env.BENCH_NOTES.prepare('SELECT * FROM docket_entries '+(clauses.length?'WHERE '+clauses.join(' AND '):'')+' ORDER BY created_at DESC LIMIT ?').bind(...args,Math.min(30,Math.max(1,Number(filters.limit)||10))).all();
- return (r.results||[]).map(labelNote);
+ const limit=Math.min(30,Math.max(1,Math.floor(Number(filters.limit)||10)));
+ // Search returns metadata and a bounded recorded-statement excerpt; detail is explicit.
+ const r=await env.BENCH_NOTES.prepare('SELECT id,case_id,case_label,source,ingest_item_id,share_number,created_at,substr(fact,1,600) excerpt FROM docket_entries WHERE '+clauses.join(' AND ')+' ORDER BY created_at DESC,id DESC LIMIT ?').bind(...args,limit+1).all();
+ const page=finishPage(r.results||[],limit,'notes',filters,'created_at');
+ return {...page,items:page.items.map(labelNote)};
+}
+export async function evidenceStatus(env) {
+ const query=async sql=>(await env.BENCH_NOTES.prepare(sql).all()).results||[];
+ const intakes=await query('SELECT state,count(*) count FROM evidence_intakes WHERE '+realMetadataSQL('metadata_json')+' GROUP BY state');
+ const notes=await query('SELECT count(*) count FROM docket_entries WHERE NOT '+syntheticSourceSQL('source'));
+ const jobs=await query('SELECT state,count(*) count FROM evidence_jobs GROUP BY state');
+ return {mode:'operational_metadata',checked_at:new Date().toISOString(),database_read:'ok',counts:{eligible_intakes_by_state:intakes,eligible_authored_notes:Number(notes[0]?.count||0),jobs_by_state:jobs},coverage:{literal_search:'all_eligible_stored_text_before_cursor_pagination',semantic_search:'newest_30_candidate_intakes_only',original_object_integrity_checked:false,unextracted_originals_searchable:false},synthetic_policy:'Known structured synthetic markers excluded from evidence counts and retrieval; unknown provenance is not authentication. Job counts include all processing jobs.',evidence_bodies_included:false};
 }
 export async function getAuthoredNote(env,id) {
- const row=await env.BENCH_NOTES.prepare('SELECT * FROM docket_entries WHERE id=?').bind(id).first();
+ const row=await env.BENCH_NOTES.prepare('SELECT * FROM docket_entries WHERE id=? AND NOT '+syntheticSourceSQL('source')).bind(id).first();
  if(!row)return null;
  const documents=await env.BENCH_NOTES.prepare('SELECT * FROM documents WHERE entry_id=?').bind(id).all();
  const recordings=await env.BENCH_NOTES.prepare('SELECT r.* FROM document_recordings r JOIN documents d ON d.id=r.document_id WHERE d.entry_id=?').bind(id).all();
@@ -44,14 +60,21 @@ export async function handleEvidenceApi(request,env,url){
  if(!await authorized(request,env))return json({error:'unauthorized'},401);
  if(request.method!=='GET')return json({error:'method_not_allowed'},405);
  const path=url.pathname.slice('/evidence-api/'.length);
- if(path==='search'){
+ if(path==='status')return json(await evidenceStatus(env));
+ if(path==='search'||path==='notes'){
   const filters=Object.fromEntries(url.searchParams);
-  const semantic=!filters.q && filters.semantic_query?await semanticEvidenceSearch(env,filters):null;
-  const items=semantic?semantic.items:await listEvidence(env,filters);
-  const authored_notes=await searchAuthoredNotes(env,filters);
-  return json({authored_notes,authored_retrieval:{method:'literal_text_and_structured_filters',semantic:false,scope:'authored notes listed separately; semantic ranking applies only to evidence intake'},items:items.map(i=>({...i,source_url:`https://confidential.darius.life/bench/evidence/${encodeURIComponent(i.id)}`})),retrieval:semantic?semantic.retrieval:{method:'literal_text_and_structured_filters',semantic:false,limit:Number(filters.limit)||30}});
+  try {
+   if(path==='notes'){
+    const page=await searchAuthoredNotesPage(env,{...filters,note_cursor:filters.note_cursor||filters.cursor});
+    return json({authored_notes:page.items,authored_retrieval:page.retrieval});
+   }
+   const semantic=!filters.q && filters.semantic_query;
+   if(semantic && (filters.cursor||filters.note_cursor))return json({error:'semantic_cursor_unsupported'},400);
+   const page=semantic?await semanticEvidenceSearch(env,filters):await listEvidencePage(env,filters);
+   const authored=semantic?{items:[],retrieval:{method:'not_searched',state:'semantic_search_unsupported',semantic:false,complete_corpus:false}}:await searchAuthoredNotesPage(env,filters);
+   return json({authored_notes:authored.items,authored_retrieval:authored.retrieval,items:page.items.map(i=>({...i,source_url:`https://confidential.darius.life/bench/evidence/${encodeURIComponent(i.id)}`})),retrieval:page.retrieval});
+  }catch(error){if(error?.message==='invalid_cursor')return json({error:'invalid_cursor'},400);throw error;}
  }
- if(path==='notes')return json({authored_notes:await searchAuthoredNotes(env,Object.fromEntries(url.searchParams))});
  const noteMatch=path.match(/^note\/([a-zA-Z0-9_-]{1,100})$/);
  if(noteMatch){const note=await getAuthoredNote(env,noteMatch[1]);return note?json(note):json({error:'not_found'},404);}
  const match=path.match(/^item\/([a-zA-Z0-9_-]{1,100})$/);
