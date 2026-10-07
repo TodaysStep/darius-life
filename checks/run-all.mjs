@@ -114,7 +114,7 @@ await check(1, "Manifest completeness", () => {
   if (dupes.length) p.push(`duplicate ids: ${dupes.join(", ")}`);
   const lo = ids.indexOf("writing.educators-exile-1");
   const hi = ids.indexOf("writing.todays-step-archive");
-  const added = ids.filter((id, i) => id !== "identity.flight-plan" && !REQUIRED.includes(id) && !(i > lo && i < hi && /^writing\.[a-z0-9-]+$/.test(id)));
+  const added = ids.filter((id, i) => !["identity.flight-plan", "identity.posterity-flight-plan"].includes(id) && !REQUIRED.includes(id) && !(i > lo && i < hi && /^writing\.[a-z0-9-]+$/.test(id)));
   if (added.length) p.push(`unlisted ids: ${added.join(", ")} (only writing.* entries between writing.educators-exile-1 and writing.todays-step-archive may be added)`);
   const core = ids.filter((id) => REQUIRED.includes(id));
   if (core.join() !== REQUIRED.join()) {
@@ -212,6 +212,7 @@ await check(5, "Page order", () => {
 await check(6, "Every link resolves", async () => {
   const p = [];
   const pages = [
+    [loadDom(path.join(DIST, "flight-plan/index.html")), path.join(DIST, "flight-plan/index.html")],
     [loadDom(path.join(DIST, "resume/index.html")), path.join(DIST, "resume/index.html")],
     [doc, indexFile],
     [verifyDoc, verifyFile],
@@ -338,9 +339,9 @@ await check(11, "No inbound channel on the site", () => {
   const BANNED = ["form", "input", "textarea", "iframe", "script", "object", "embed", "img", "picture", "video", "audio", "svg", "canvas", "button", "select"];
   for (const f of htmlFiles) {
     const d = loadDom(f);
-    for (const tag of BANNED) if (d.querySelector(tag) && !(tag === "img" && rel(f) === "dist/resume/index.html")) p.push(`${rel(f)} contains <${tag}>`);
+    for (const tag of BANNED) if (d.querySelector(tag) && !(tag === "img" && ["dist/resume/index.html", "dist/flight-plan/index.html"].includes(rel(f)))) p.push(`${rel(f)} contains <${tag}>`);
     for (const img of d.querySelectorAll("img")) {
-      if (img.getAttribute("src") !== "/assets/resume/michael-darius-flight-plan.jpeg" || !img.getAttribute("alt") || !img.hasAttribute("width") || !img.hasAttribute("height")) p.push(`${rel(f)}: résumé image must be the approved local asset with alt text and dimensions`);
+      if (!(["/assets/resume/michael-darius-seatbelt-salesman.jpeg", "/assets/resume/posterity-systems-flight-plan.jpeg"].includes(img.getAttribute("src"))) || !img.getAttribute("alt") || !img.hasAttribute("width") || !img.hasAttribute("height")) p.push(`${rel(f)}: résumé image must be the approved local asset with alt text and dimensions`);
     }
     for (const el of d.querySelectorAll("*")) {
       for (const attr of el.getAttributeNames()) if (/^on/i.test(attr)) p.push(`${rel(f)}: inline handler ${attr} on <${el.tagName.toLowerCase()}>`);
