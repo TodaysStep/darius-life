@@ -13,3 +13,8 @@ figcaption { margin-top: 12px; }
 .resume-page footer { border-top: 1px solid #111111; padding-top: 24px; }
 @media (max-width: 640px) { .ventures { grid-template-columns: 1fr; gap: 0; } .resume-page { padding: 28px 20px 48px; } }
 @media print { .resume-page nav, .resume-page footer a { display: none; } figure { break-inside: avoid; } }
+
+.resume-illustration { position: relative; }
+.flight-plan-image-link { position: absolute; left: 0; right: 0; bottom: 0; height: 9%; display: block; }
+.flight-plan-image-link:focus-visible { outline: 2px solid #111111; outline-offset: 3px; }
+@media print { .flight-plan-image-link { display: none; } }
