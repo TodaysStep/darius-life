@@ -213,7 +213,7 @@ await check(5, "Page order", () => {
 await check(6, "Every link resolves", async () => {
   const p = [];
   const pages = [
-    [loadDom(path.join(DIST, "buymecoffee/index.html")), path.join(DIST, "buymecoffee/index.html")],
+    [loadDom(path.join(DIST, "buymeacoffee/index.html")), path.join(DIST, "buymeacoffee/index.html")],
     [loadDom(path.join(DIST, "flight-plan/index.html")), path.join(DIST, "flight-plan/index.html")],
     [loadDom(path.join(DIST, "resume/index.html")), path.join(DIST, "resume/index.html")],
     [doc, indexFile],
@@ -587,13 +587,13 @@ await check(20, "Preview and page metadata", () => {
 
 await check(21, "Personal support page and payment destination", () => {
   const p = [];
-  const d = loadDom(path.join(DIST, "buymecoffee/index.html"));
+  const d = loadDom(path.join(DIST, "buymeacoffee/index.html"));
   const links = d.querySelectorAll("a.support");
   if (links.length !== 1 || links[0].getAttribute("href") !== SUPPORT_RECIPIENT) p.push("support page must have exactly one configured Messages destination");
   if (d.querySelectorAll("main h1").length !== 1 || !d.querySelector("#needs-heading")) p.push("support page heading structure missing");
   if (!d.querySelector("#payment-help")?.textContent.includes("Messages")) p.push("support page must explain the Messages handoff");
   if (d.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content") !== META_CSP) p.push("support page security policy missing");
-  if (d.querySelector('link[rel="canonical"]')?.getAttribute("href") !== "https://darius.life/buymecoffee/") p.push("support page canonical route differs");
+  if (d.querySelector('link[rel="canonical"]')?.getAttribute("href") !== "https://darius.life/buymeacoffee/") p.push("support page canonical route differs");
   const regression = spawnSync(process.execPath, ["--test", "checks/support-contact.test.mjs"], { cwd: ROOT, encoding: "utf8" });
   if (regression.status !== 0) p.push(regression.stdout + regression.stderr);
   return p;

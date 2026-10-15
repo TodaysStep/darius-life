@@ -553,7 +553,7 @@ ways to break it).
 The build refuses to publish the public page if your mailing address or phone
 number (the `PROTECTED_STRINGS` secret) appears in generated files, with one
 scoped exception: the founder requested the personal Apple Cash support page
-at `/buymecoffee/` on October 15, 2026. That page's single Messages destination
+at `/buymeacoffee/` on October 15, 2026. That page's single Messages destination
 is public. `checks/support-contact.mjs` excludes only that exact link from the
 privacy scan; additional occurrences and every other page remain protected.
 Check 17 (`checks/run-all.mjs`) separately fails the build outright if

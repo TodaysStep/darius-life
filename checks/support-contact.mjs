@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 
-export const SUPPORT_PATH = "dist/buymecoffee/index.html";
+export const SUPPORT_PATH = "dist/buymeacoffee/index.html";
 export const SUPPORT_RECIPIENT = "sms:+14155335621";
 
 // The founder requested publication of this personal Apple Cash page. Only its
