@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
+import { privacyScanText, SUPPORT_PATH, SUPPORT_RECIPIENT } from "./support-contact.mjs";
 import { sha256, extractText, loadDom, fetchOnce, resolveLink as resolveLinkBase, mapLimit, META_CSP, META_REFERRER, pngDimensions } from "./lib.mjs";
 
 if (process.env.HTTPS_PROXY && !process.env.NODE_USE_ENV_PROXY) {
@@ -212,6 +213,7 @@ await check(5, "Page order", () => {
 await check(6, "Every link resolves", async () => {
   const p = [];
   const pages = [
+    [loadDom(path.join(DIST, "buymecoffee/index.html")), path.join(DIST, "buymecoffee/index.html")],
     [loadDom(path.join(DIST, "flight-plan/index.html")), path.join(DIST, "flight-plan/index.html")],
     [loadDom(path.join(DIST, "resume/index.html")), path.join(DIST, "resume/index.html")],
     [doc, indexFile],
@@ -221,7 +223,9 @@ await check(6, "Every link resolves", async () => {
   for (const [d, file] of pages) {
     for (const a of d.querySelectorAll("a")) {
       const href = a.getAttribute("href") ?? "";
-      if (href.startsWith("mailto:")) {
+      if (href === SUPPORT_RECIPIENT && rel(file) === SUPPORT_PATH && a.matches("a.support")) {
+        // Native Messages handoff; the supporter confirms payment in Apple Cash.
+      } else if (href.startsWith("mailto:")) {
         const addr = decodeURIComponent(href.slice(7).split("?")[0]).toLowerCase();
         if (!allow.mailto.includes(addr)) p.push(`mailto address not approved: ${addr}`);
       } else if (href.startsWith("#")) {
@@ -292,7 +296,7 @@ await check(8, "No unresolved values", () => {
 });
 
 // ---------------------------------------------------------------- 9
-await check(9, "Address and phone never published", () => {
+await check(9, "Private address and phone protected; support link scoped", () => {
   const raw = process.env.PROTECTED_STRINGS ?? "";
   const norm = (s) => s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "");
   const needles = raw.split(/\r?\n|[|;]/).map(norm).filter(Boolean);
@@ -303,7 +307,8 @@ await check(9, "Address and phone never published", () => {
   needles.forEach((n, i) => n.length < 4 && p.push(`protected string #${i + 1} is shorter than 4 letters or digits once spacing is removed`));
   for (const f of distFiles) {
     const buf = fs.readFileSync(f);
-    const hay = norm(TEXT_EXT.has(path.extname(f)) ? buf.toString("utf8") : buf.toString("latin1"));
+    const text = TEXT_EXT.has(path.extname(f)) ? buf.toString("utf8") : buf.toString("latin1");
+    const hay = norm(privacyScanText(rel(f), text));
     needles.forEach((n, i) => n.length >= 4 && hay.includes(n) && p.push(`protected string #${i + 1} appears in ${rel(f)}`));
   }
   return p;
@@ -577,6 +582,20 @@ await check(20, "Preview and page metadata", () => {
   for (const file of ["favicon.ico", "favicon.svg"]) {
     if (!fs.existsSync(path.join(DIST, file))) p.push(`dist/${file} is missing`);
   }
+  return p;
+});
+
+await check(21, "Personal support page and payment destination", () => {
+  const p = [];
+  const d = loadDom(path.join(DIST, "buymecoffee/index.html"));
+  const links = d.querySelectorAll("a.support");
+  if (links.length !== 1 || links[0].getAttribute("href") !== SUPPORT_RECIPIENT) p.push("support page must have exactly one configured Messages destination");
+  if (d.querySelectorAll("main h1").length !== 1 || !d.querySelector("#needs-heading")) p.push("support page heading structure missing");
+  if (!d.querySelector("#payment-help")?.textContent.includes("Messages")) p.push("support page must explain the Messages handoff");
+  if (d.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content") !== META_CSP) p.push("support page security policy missing");
+  if (d.querySelector('link[rel="canonical"]')?.getAttribute("href") !== "https://darius.life/buymecoffee/") p.push("support page canonical route differs");
+  const regression = spawnSync(process.execPath, ["--test", "checks/support-contact.test.mjs"], { cwd: ROOT, encoding: "utf8" });
+  if (regression.status !== 0) p.push(regression.stdout + regression.stderr);
   return p;
 });
 
