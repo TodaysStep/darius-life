@@ -3,12 +3,21 @@
     "darius.medium.com": {
       "why": "Medium answers every automated request, including real headless browsers, with a Cloudflare challenge (HTTP 403, cf-mitigated: challenge). A missing post returns the same 403, so the challenge alone proves nothing.",
       "feed": "https://medium.com/feed/@darius"
+    },
+    "211sandiego.org": {
+      "why": "The housing-information page returned HTTP 403 with cf-mitigated: challenge on 2026-10-15. Verify the exact URL against the publisher's homepage or the recorded indexed page content below; a challenge alone is not evidence that the page exists.",
+      "feed": "https://211sandiego.org/"
     }
   },
   "recorded": {
     "https://darius.medium.com/design-educators-in-exile-the-forgotten-architects-of-civic-stability-836f51f6112b": {
       "provedAt": "2026-09-27",
       "method": "Listed as an item link in https://medium.com/feed/@darius (HTTP 200)."
+    },
+    "https://211sandiego.org/housing-information/": {
+      "provedAt": "2026-10-15",
+      "method": "Two web-search indexes returned the publisher's page at this exact URL, titled Housing & Homelessness, with housing-resource content and a crawl age of two days. The publisher's indexed homepage also lists Housing Information. Direct automated requests returned a Cloudflare challenge; no direct HTTP 200 is claimed.",
+      "source": "https://211sandiego.org/housing-information/"
     }
   }
 }
