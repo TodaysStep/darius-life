@@ -1,3 +1,4 @@
+import {literalPattern,realMetadataSQL,readCursor,finishPage} from './bench-retrieval-page.js';
 import PostalMime from 'postal-mime';
 import { extractText, getDocumentProxy, getResolvedPDFJS } from 'unpdf';
 const VERSION = '2026-10-05.3';
@@ -358,25 +359,31 @@ export async function runEvidenceJobs(env,{limit=2}={}) {
  return {checked:jobs.length};
 }
 // These functions confer NO authorization. Call only after owner authentication.
-export async function listEvidence(env,filters={}) {
- const clauses=[],args=[];
- if(filters.q){clauses.push('(i.subject LIKE ? OR i.body_text LIKE ? OR EXISTS (SELECT 1 FROM evidence_parts p JOIN evidence_derivations d ON d.artifact_id=p.artifact_id WHERE p.intake_id=i.id AND d.text_content LIKE ? AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version)))))');args.push(...Array(3).fill(`%${String(filters.q).slice(0,300)}%`));}
- if(filters.person){clauses.push('(i.metadata_json LIKE ? OR i.body_text LIKE ?)');args.push(...Array(2).fill(`%${String(filters.person).slice(0,300)}%`));}
- if(filters.document){clauses.push('EXISTS (SELECT 1 FROM evidence_parts p WHERE p.intake_id=i.id AND p.filename LIKE ?)');args.push(`%${String(filters.document).slice(0,300)}%`);}
- if(filters.email){clauses.push('(i.envelope_from=? OR i.message_id=?)');args.push(filters.email,filters.email);}
- if(filters.type){clauses.push('EXISTS (SELECT 1 FROM evidence_parts p WHERE p.intake_id=i.id AND p.mime_type LIKE ?)');args.push(`${String(filters.type).slice(0,100)}%`);}
- if(filters.case_id){clauses.push('EXISTS (SELECT 1 FROM json_each(i.case_ids_json) WHERE value=?)');args.push(filters.case_id);}
- if(filters.from){clauses.push('i.received_at>=?');args.push(filters.from);}
- if(filters.to){clauses.push('i.received_at<=?');args.push(filters.to);}
- if(filters.state){clauses.push('i.state=?');args.push(filters.state);}
- return rows(env,`SELECT i.id,i.state,i.received_at,i.envelope_from,i.subject,i.message_id,i.case_ids_json,i.receipt_json,i.error_code,i.original_artifact_id FROM evidence_intakes i ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY i.received_at DESC LIMIT ?`,...args,Math.min(100,Math.max(1,Number(filters.limit)||30)));
+export async function listEvidence(env,filters={}) { return (await listEvidencePage(env,filters)).items; }
+export async function listEvidencePage(env,filters={}) {
+ const clauses=[realMetadataSQL('i.metadata_json')],args=[];
+ const cursor=readCursor(filters.cursor,'intakes',filters);
+ if(cursor){clauses.push(`(i.received_at<? OR (i.received_at=? AND i.id<?))`);args.push(cursor.time,cursor.time,cursor.id);}
+ if(filters.q){clauses.push(`(i.subject LIKE ? ESCAPE '\\' OR i.body_text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM evidence_parts p JOIN evidence_derivations d ON d.artifact_id=p.artifact_id WHERE p.intake_id=i.id AND d.text_content LIKE ? ESCAPE '\\' AND ${realMetadataSQL('d.provenance_json')} AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version)))))`);args.push(...Array(3).fill(literalPattern(filters.q)));}
+ if(filters.person){clauses.push(`(i.metadata_json LIKE ? ESCAPE '\\' OR i.body_text LIKE ? ESCAPE '\\')`);args.push(...Array(2).fill(literalPattern(filters.person)));}
+ if(filters.document){clauses.push(`EXISTS (SELECT 1 FROM evidence_parts p WHERE p.intake_id=i.id AND p.filename LIKE ? ESCAPE '\\')`);args.push(literalPattern(filters.document));}
+ if(filters.email){clauses.push(`(i.envelope_from=? OR i.message_id=?)`);args.push(filters.email,filters.email);}
+ if(filters.type){clauses.push(`EXISTS (SELECT 1 FROM evidence_parts p WHERE p.intake_id=i.id AND p.mime_type LIKE ?)`);args.push(`${String(filters.type).slice(0,100)}%`);}
+ if(filters.case_id){clauses.push(`EXISTS (SELECT 1 FROM json_each(i.case_ids_json) WHERE value=?)`);args.push(filters.case_id);}
+ if(filters.collection_id){clauses.push(`json_extract(CASE WHEN json_valid(i.metadata_json) THEN i.metadata_json ELSE '{}' END,'$.collection_id')=?`);args.push(String(filters.collection_id));}
+ if(filters.from){clauses.push(`i.received_at>=?`);args.push(filters.from);}
+ if(filters.to){clauses.push(`i.received_at<=?`);args.push(filters.to);}
+ if(filters.state){clauses.push(`i.state=?`);args.push(filters.state);}
+ const limit=Math.min(100,Math.max(1,Math.floor(Number(filters.limit)||30)));
+ const found=await rows(env,`SELECT i.id,i.state,i.received_at,i.envelope_from,i.subject,i.message_id,i.case_ids_json,i.receipt_json,i.error_code,i.original_artifact_id FROM evidence_intakes i ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY i.received_at DESC,i.id DESC LIMIT ?`,...args,limit+1);
+ return finishPage(found,limit,'intakes',filters,'received_at');
 }
 export async function getEvidence(env,id) {
- const intake=await first(env,'SELECT * FROM evidence_intakes WHERE id=?',id);
+ const intake=await first(env,'SELECT * FROM evidence_intakes WHERE id=? AND '+realMetadataSQL('metadata_json'),id);
  if(!intake)return null;
  const parts=await rows(env,'SELECT p.*,a.sha256,a.byte_size FROM evidence_parts p JOIN evidence_artifacts a ON a.id=p.artifact_id WHERE p.intake_id=? ORDER BY part_index',id);
- const derivations=await rows(env,"SELECT d.* FROM evidence_derivations d WHERE d.artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version)))",id);
- const derivation_history=(await rows(env,'SELECT d.* FROM evidence_derivations d WHERE d.artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) ORDER BY created_at DESC',id)).map(d=>({...d,superseded:!derivations.some(current=>current.id===d.id)}));
+ const derivations=await rows(env,`SELECT d.* FROM evidence_derivations d WHERE ${realMetadataSQL('d.provenance_json')} AND d.artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version)))`,id);
+ const derivation_history=(await rows(env,`SELECT d.* FROM evidence_derivations d WHERE ${realMetadataSQL('d.provenance_json')} AND d.artifact_id IN (SELECT artifact_id FROM evidence_parts WHERE intake_id=?) ORDER BY created_at DESC`,id)).map(d=>({...d,superseded:!derivations.some(current=>current.id===d.id)}));
  const deliveries=await rows(env,'SELECT * FROM evidence_deliveries WHERE intake_id=? ORDER BY received_at',id);
  const context=await first(env,'SELECT * FROM evidence_context WHERE intake_id=?',id);
  const context_history=await rows(env,'SELECT * FROM evidence_context_history WHERE intake_id=? ORDER BY created_at DESC LIMIT 20',id);
@@ -397,7 +404,7 @@ export async function semanticEvidenceSearch(env,filters={}) {
  if(!query || !candidates.length)return {items:[],retrieval:{...retrieval,state:'ready',candidates:candidates.length}};
  const ids=candidates.map(i=>i.id),placeholders=ids.map(()=>'?').join(',');
  const originals=await rows(env,`SELECT id,original_artifact_id,subject,substr(body_text,1,8000) body_text FROM evidence_intakes WHERE id IN (${placeholders})`,...ids);
- const derived=await rows(env,`SELECT p.intake_id,d.id,d.artifact_id,d.version,d.kind,substr(d.text_content,1,8000) text_content FROM evidence_parts p JOIN evidence_derivations d ON d.artifact_id=p.artifact_id WHERE p.intake_id IN (${placeholders}) AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version))) LIMIT 100`,...ids);
+ const derived=await rows(env,`SELECT p.intake_id,d.id,d.artifact_id,d.version,d.kind,substr(d.text_content,1,8000) text_content FROM evidence_parts p JOIN evidence_derivations d ON d.artifact_id=p.artifact_id WHERE p.intake_id IN (${placeholders}) AND ${realMetadataSQL('d.provenance_json')} AND NOT EXISTS (SELECT 1 FROM evidence_derivations newer WHERE newer.artifact_id=d.artifact_id AND newer.kind=d.kind AND (newer.created_at>d.created_at OR (newer.created_at=d.created_at AND newer.version>d.version))) LIMIT 100`,...ids);
  const proposed=[...originals.map(i=>({source_id:`email:${i.id}`,intake_id:i.id,artifact_id:i.original_artifact_id,text:`${i.subject||''}\n${i.body_text||''}`})),...derived.map(d=>({source_id:`derivation:${d.id}`,intake_id:d.intake_id,artifact_id:d.artifact_id,derivation_id:d.id,derivation_version:d.version,text:d.text_content}))];
  let remaining=50000;const sources=[];
  for(const source of proposed){if(remaining<=0)break;const text=source.text.slice(0,remaining);sources.push({...source,text});remaining-=text.length;}
@@ -412,7 +419,7 @@ export async function semanticEvidenceSearch(env,filters={}) {
    accepted.push({...source,text:undefined,quote:match.quote});
   }
   const matched=candidates.filter(c=>accepted.some(m=>m.intake_id===c.id));
-  const resultLimit=Math.min(100,Math.max(1,Number(filters.limit)||30));
+  const resultLimit=Math.min(100,Math.max(1,Math.floor(Number(filters.limit)||30)));
   const items=matched.slice(0,resultLimit).map(c=>({...c,semantic_matches:accepted.filter(m=>m.intake_id===c.id)}));
   return {items,retrieval:{...retrieval,state:'ready',candidates:candidates.length,matches:matched.length,returned:items.length,result_limit:resultLimit,results_truncated:matched.length>items.length,sources_considered:sources.length,truncated:sources.length<proposed.length||remaining===0}};
  }catch{return {items:[],retrieval:{...retrieval,state:'unavailable',error_code:'semantic_retrieval_failed',candidates:candidates.length}};}
