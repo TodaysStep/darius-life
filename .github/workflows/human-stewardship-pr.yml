@@ -1,0 +1,31 @@
+name: Verify approved Human Stewardship placement
+on:
+  pull_request:
+    paths:
+      - "content/manifest.json"
+      - "manifest.lock"
+      - "checks/**"
+      - "src/styles.css"
+      - ".github/workflows/human-stewardship-pr.yml"
+  push:
+    branches: ["site-update/human-stewardship-20261023"]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+      - name: Original build and checks (source-only, no production network)
+        env:
+          CI: "false"
+          LINKCHECK: skip
+        run: npm run build
+      - name: Site-specific placement, origin and preservation checks
+        run: node --test checks/hsg-link.test.mjs
