@@ -155,7 +155,7 @@ export async function build() {
     ...bySection("identity").map((item) => renderItem(item, ctx)),
     "</header>",
     "<main>",
-    ...["how", "building", "explore", "contact"].map(section),
+    ...["how", "building", "explore", "contact", "help"].map(section),
     "</main>",
     `<footer data-section="footer">\n${renderSectionItems(bySection("footer"), ctx)}\n</footer>`,
   ].join("\n");
