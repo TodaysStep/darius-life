@@ -25,9 +25,9 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const readJSON = (p) => JSON.parse(read(p));
 
 // V2 is the homepage approved for publication on October 24, 2026.
-const REQUIRED = ["identity","identity.0","identity.1","identity.2","identity.3","how.0","how.1","how.2","building.living","building.living.description","building.education","building.education.description","building.engineering","building.engineering.description","building.smallstep","building.smallstep.description","explore.resume","explore.resume.description","explore.flight","explore.flight.description","explore.thesis","explore.thesis.description","explore.photography","explore.notes","explore.notes.description","contact.invite","contact.email","contact.other","footer.founder","footer.copyright"];
+const REQUIRED = ["identity","identity.0","identity.1","identity.2","identity.3","how.0","how.1","how.2","building.living","building.living.description","building.education","building.education.description","building.engineering","building.engineering.description","building.smallstep","building.smallstep.description","explore.resume","explore.resume.description","explore.flight","explore.flight.description","explore.thesis","explore.thesis.description","explore.photography","explore.notes","explore.notes.description","contact.invite","contact.email","contact.other","help.blurb","help.priority","help.housing","help.groceries","help.meal","help.ride","help.essentials","help.meals-on-wheels","help.work-dreamstep","help.work-smallstep","help.resources","help.other","help.lodging","help.connectivity","help.everyday","help.mail","help.storage","help.workspace","help.professional","help.housing-lead","help.introduction","help.hire","help.sponsor-dreamstep","help.direct-support","help.professional-expenses","help.hour","help.share","help.unsure","help.founders-letter","footer.founder","footer.copyright"];
 
-const PAGE_ORDER = ["identity", "how", "building", "explore", "contact", "footer"];
+const PAGE_ORDER = ["identity", "how", "building", "explore", "contact", "help", "footer"];
 
 // The exact status-LED colours used in src/styles.css — kept here too so check 14
 // can allow precisely these and nothing else.

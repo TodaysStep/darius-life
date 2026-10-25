@@ -27,3 +27,17 @@ test("Canonical policy source and status data remain independent of the new home
     assert.equal([...doc.querySelectorAll("a")].find(a => a.textContent === label)?.getAttribute("href"), href);
   }
 });
+
+test("All 27 original help entries appear at the bottom with their saved destinations", () => {
+  const entries = canonical.items.filter(x => x.section === "help" && x.kind === "entry");
+  assert.equal(entries.length, 27);
+  const section = doc.querySelector('[data-section="help"]');
+  assert.equal(section?.querySelectorAll("li").length, 27);
+  assert.equal(doc.querySelector("main > section:last-child"), section);
+  for (const entry of entries) {
+    const item = doc.querySelector(`[data-id="${entry.id}"]`);
+    assert.ok(item, entry.id);
+    assert.equal(item.querySelector("a")?.getAttribute("href"), entry.href, entry.id);
+  }
+  assert.ok(!section.textContent.includes("Target wish list"));
+});
