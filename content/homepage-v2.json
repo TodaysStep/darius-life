@@ -1,0 +1,240 @@
+{
+  "version": 2,
+  "approval": "Sentinel_be2a652d2dec8191ad2952e3c8418f9a",
+  "sections": [
+    {
+      "id": "identity"
+    },
+    {
+      "id": "how",
+      "heading": "HOW I WORK"
+    },
+    {
+      "id": "building",
+      "heading": "WHAT I’M BUILDING"
+    },
+    {
+      "id": "explore",
+      "heading": "EXPLORE MY WORK"
+    },
+    {
+      "id": "contact",
+      "heading": "LET’S WORK TOGETHER"
+    },
+    {
+      "id": "footer"
+    }
+  ],
+  "items": [
+    {
+      "id": "identity",
+      "section": "identity",
+      "kind": "identity",
+      "label": "Michael Darius",
+      "sha256": "9f206fa06f18d36a27ae2a81b740403470b6d1725363959a8e54236babe7b2ad"
+    },
+    {
+      "id": "identity.0",
+      "section": "identity",
+      "kind": "text",
+      "text": "Designer. Builder. Educator.",
+      "sha256": "e8290fffc97bfeeb7bac593ccb8702bbd31fb236e076f901ccb3cacbe137248b"
+    },
+    {
+      "id": "identity.1",
+      "section": "identity",
+      "kind": "text",
+      "text": "I help people turn meaningful ideas into things they can use.",
+      "sha256": "f59ccefbbd89eeb9d890adf0c80bd4169806cbc8ac5eb6b0f1679d8e30e471d9"
+    },
+    {
+      "id": "identity.2",
+      "section": "identity",
+      "kind": "text",
+      "text": "My background includes contributions to Apple’s iTunes Music Store and early cloud services. Today I’m building Living Instruments and working across design, engineering, education, and storytelling.",
+      "sha256": "638b649d429ac5303b6a25302c1dd99f188b2088b981f308b829bae42aa528fd"
+    },
+    {
+      "id": "identity.3",
+      "section": "identity",
+      "kind": "text",
+      "text": "I lead the work personally. From the first conversation through design, development, launch, and ongoing improvements, you work with me. When a project needs collaborators, we make their roles clear. You know who is responsible and how to reach us.",
+      "sha256": "628f3945e46f7d5eded6fbf80bf3ff4f312fcfb574d0595162c040f0113b7af7"
+    },
+    {
+      "id": "how.0",
+      "section": "how",
+      "kind": "text",
+      "text": "We start with what you want to make possible. I help shape it into a clear scope, a practical plan, and something we can put in front of people.",
+      "sha256": "ebc97a721b090c5c98ac6a22f0920d9b3beae690fdd729aecb8e1f3f0a38b8ca"
+    },
+    {
+      "id": "how.1",
+      "section": "how",
+      "kind": "text",
+      "text": "I like making ideas tangible early: a paper sketch, a clickable experience, working software. We look at it together, learn what matters, and keep improving it.",
+      "sha256": "7753bcd6c8a63dc3a97d07d25363d11011aa084bc5825c5c8fff7f10834ef555"
+    },
+    {
+      "id": "how.2",
+      "section": "how",
+      "kind": "text",
+      "text": "There is serious thought behind the work. There should also be curiosity, good conversation, and some fun along the way.",
+      "sha256": "4872fe0a1ad9d0e8dc1a8423c4b9185c654e6b7de57c1a5718387582d661f413"
+    },
+    {
+      "id": "building.living",
+      "section": "building",
+      "kind": "text",
+      "text": "[Living Instruments](https://livinginstruments.com)",
+      "sha256": "7f0a37daf80e501ff2d4e88d4e4242e3dc21e0590b6cf9acd6b6d1fea0f572f5"
+    },
+    {
+      "id": "building.living.description",
+      "section": "building",
+      "kind": "text",
+      "text": "The organization bringing together my work in software, stewardship, and continuity.",
+      "sha256": "afcb56a2791824d30475399302567431e20f9841410c655ccddfb19fe0fd6baf"
+    },
+    {
+      "id": "building.education",
+      "section": "building",
+      "kind": "text",
+      "text": "[Dream Step Education](https://dreamstep.education)",
+      "sha256": "706e6ca2e9453a7c0ca4b673763314cbe19b5c9746cfad54fd1bb3d21a193ef8"
+    },
+    {
+      "id": "building.education.description",
+      "section": "building",
+      "kind": "text",
+      "text": "A community of practice for learning, making, and helping one another build.",
+      "sha256": "3cecb16236be3784ed8109462005bf27f59c349b8f34f741e245b3a6aa1ac518"
+    },
+    {
+      "id": "building.engineering",
+      "section": "building",
+      "kind": "text",
+      "text": "[Dream Step Engineering](https://dreamstep.engineering)",
+      "sha256": "8332257556324f0f9eb6f36963eaf7f59f57315233c6480cc55236fe9f23bd9e"
+    },
+    {
+      "id": "building.engineering.description",
+      "section": "building",
+      "kind": "text",
+      "text": "Design and engineering for useful digital experiences.",
+      "sha256": "9f7b2fbbe679778d52cca52313982e10f4aa2e7774b02018ffa7f524d489f1a4"
+    },
+    {
+      "id": "building.smallstep",
+      "section": "building",
+      "kind": "text",
+      "text": "[Small Step Ventures](https://smallstep.ventures)",
+      "sha256": "a9d99184638f703893cab3873d5fb0c2fee61d0260ee602708f20611c980fea8"
+    },
+    {
+      "id": "building.smallstep.description",
+      "section": "building",
+      "kind": "text",
+      "text": "The home of the Living Instruments Storybook Studio and ventures with promises of their own.",
+      "sha256": "d91ebe89a7fc37d331c2d9e72785e4bcb278b4a9413122f68a595c6b6fc24e19"
+    },
+    {
+      "id": "explore.resume",
+      "section": "explore",
+      "kind": "text",
+      "text": "[My résumé](/resume/)",
+      "sha256": "181435484f3a73628002e94f6016067bfae44ccd6a4fe52b4047f18867f52ff0"
+    },
+    {
+      "id": "explore.resume.description",
+      "section": "explore",
+      "kind": "text",
+      "text": "The World’s Worst Seatbelt Salesman.",
+      "sha256": "8ea71cd436afef531d595da2ceaa37632b695f4096b715330aba13c53bab4d0f"
+    },
+    {
+      "id": "explore.flight",
+      "section": "explore",
+      "kind": "text",
+      "text": "[My Flight Plan](/flight-plan/)",
+      "sha256": "2639e224949962084d04a32ce32a7dd1c217f0601712c89bd1931675b5bf7ca4"
+    },
+    {
+      "id": "explore.flight.description",
+      "section": "explore",
+      "kind": "text",
+      "text": "How I approach and carry the work.",
+      "sha256": "1b1c60c06b2d7990554f40d5666f9c6925ec762d5c6f0d6b13f134d43f7fda1f"
+    },
+    {
+      "id": "explore.thesis",
+      "section": "explore",
+      "kind": "text",
+      "text": "[My thesis](https://posterityos.com/posterity/1.0/en/contents)",
+      "sha256": "27acffda4531ae35770ebba8c1676523aca845df7d39b17918d29c83d0b11bc6"
+    },
+    {
+      "id": "explore.thesis.description",
+      "section": "explore",
+      "kind": "text",
+      "text": "Posterity 1.0 — A Thesis on Stewarding Meaningful Work.",
+      "sha256": "7c84718ff8062fe7f059ea669ef4aef9d6967bd7bd453675364b650662a8eca7"
+    },
+    {
+      "id": "explore.photography",
+      "section": "explore",
+      "kind": "text",
+      "text": "[My photography](https://michaeldarius.pixieset.com)",
+      "sha256": "334d4e6c3387127c25b39028d41533252e42d03cf6c2b19f8a7a7a78cb498ea3"
+    },
+    {
+      "id": "explore.notes",
+      "section": "explore",
+      "kind": "text",
+      "text": "[Today’s Notes](https://todaysnotes.com)",
+      "sha256": "34af188b8f40e9c9c1581e530e18c1a499a999d211c3f9ef92ce872d5dc04400"
+    },
+    {
+      "id": "explore.notes.description",
+      "section": "explore",
+      "kind": "text",
+      "text": "What I notice, make, and keep.",
+      "sha256": "05aeecb8d77a5f09862b77731612e98049efdfde7d10cf16e8f1a7fe688d7c12"
+    },
+    {
+      "id": "contact.invite",
+      "section": "contact",
+      "kind": "text",
+      "text": "Have a project in mind? Write to me with what you’re hoping to make, who it’s for, and where you need help. We can begin with the idea you have and work out the right next step together.",
+      "sha256": "2c21b10d41546737517be9f95ade99c43415ad14d794944379176bb9f6059082"
+    },
+    {
+      "id": "contact.email",
+      "section": "contact",
+      "kind": "text",
+      "text": "[michael@dreamstep.engineering](mailto:michael@dreamstep.engineering)",
+      "sha256": "2c93df18e84667311b4d5009505f29fc4fc61b026c1e266cef4b1bac9e235938"
+    },
+    {
+      "id": "contact.other",
+      "section": "contact",
+      "kind": "text",
+      "text": "For speaking, press, or another kind of conversation, please get in touch in writing.",
+      "sha256": "944b9efcd0933311ae23a19616b6719f6bf184e9f2b7de6fa06d8455ee3af683"
+    },
+    {
+      "id": "footer.founder",
+      "section": "footer",
+      "kind": "text",
+      "text": "Michael Darius\nFounder, Living Instruments",
+      "sha256": "d9e2936c6c4b4ee9daec66f85c78945d6064572db966d9d1327af005908750cd"
+    },
+    {
+      "id": "footer.copyright",
+      "section": "footer",
+      "kind": "text",
+      "text": "© 2026 Michael Darius. All rights reserved.",
+      "sha256": "34ff3c7f8fca60b0c5da16b5e6787eeb3e2228a1c6d84920a06b0c5aa7971f75"
+    }
+  ]
+}

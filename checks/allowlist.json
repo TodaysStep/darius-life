@@ -1,53 +1,21 @@
 {
   "index": [
-    "https://newworksecurity.com",
-    "https://humansteward.org/",
-    "https://smallstep.ventures",
-    "https://scenicdrive.properties",
-    "#trademark-classifications",
-    "https://www.bpelsg.ca.gov/laws/pe_act.pdf",
-    "https://todaysnotes.com",
-    "https://todaysstep.com",
-    "https://livinginstruments.com/founder-notes",
-    "https://confidential.darius.life/bench/",
-    "https://villaincostume.com",
-    "https://villaincostume.com/villain-costume/policy",
-    "https://livinginstruments.com/correspondence",
-    "https://livinginstruments.com/legal/privacy",
-    "https://livinginstruments.com/legal/terms",
-    "https://livinginstruments.com/legal/songsketch-schedule",
-    "https://livinginstruments.com/legal/napkinsketch-schedule",
-    "https://livinginstruments.com/legal/venture-stewardship-schedule",
     "https://livinginstruments.com",
-    "https://loxmusic.com/memorial-song-request",
-    "https://posterityos.com",
-    "https://dreamstep.education/press",
-    "https://livinginstruments.com/press/media-kit",
-    "https://livinginstruments.com/living-instruments/public/how-we-work",
-    "https://livinginstruments.com/legal/honest-reading-terms",
-    "https://livinginstruments.com/living-instruments/public/operating-model",
-    "https://posterityos.com/posterity/1.0/en/contents",
     "https://dreamstep.education",
-    "https://darius.medium.com/design-educators-in-exile-the-forgotten-architects-of-civic-stability-836f51f6112b",
-    "https://newsletter.todaysstep.com/archive",
-    "https://songsketch.app",
-    "https://napkinsketch.app",
-    "https://napkinsketch.studio",
     "https://dreamstep.engineering",
-    "https://loxmusic.com",
-    "https://foundingrecord.org",
-    "https://www.instacart.com/p/gift-cards",
-    "https://www.doordash.com/gift-cards/",
-    "https://www.target.com/gift-registry/create-custom-registry",
-    "https://www.meals-on-wheels.org/",
-    "https://211sandiego.org/housing-information/",
-    "https://darius.life",
+    "https://smallstep.ventures",
     "/resume/",
-    "/flight-plan/"
+    "/flight-plan/",
+    "https://posterityos.com/posterity/1.0/en/contents",
+    "https://michaeldarius.pixieset.com",
+    "https://todaysnotes.com",
+    "mailto:michael@dreamstep.engineering"
   ],
   "verify": [
     "/terms.txt",
     "/terms.sha256"
   ],
-  "mailto": []
+  "mailto": [
+    "michael@dreamstep.engineering"
+  ]
 }

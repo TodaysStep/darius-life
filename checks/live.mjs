@@ -58,17 +58,18 @@ await check("darius.life page fetched and parsed", async () => {
 
 await check("every manifest ID is visible on the live page (acceptance 2)", () => {
   if (!liveDoc) return { skip: "page fetch failed" };
-  const manifest = readJSON("content/manifest.json");
+  const manifest = readJSON("content/homepage-v2.json");
   const missing = manifest.items.filter((i) => !liveDoc.querySelector(`[data-id="${i.id}"]`)).map((i) => i.id);
   return missing.length ? [`missing on live page: ${missing.join(", ")}`] : [];
 });
 
-await check("terms visible with no click (acceptance 4)", () => {
+await check("approved V2 homepage is live without old policy sections", () => {
   if (!liveDoc) return { skip: "page fetch failed" };
-  const el = liveDoc.querySelector('[data-id="terms"]');
-  if (!el) return ["terms block not found"];
-  for (let n = el; n; n = n.parentElement) if (n.tagName === "DETAILS" || n.hasAttribute?.("hidden")) return [`inside <${n.tagName.toLowerCase()}>`];
-  return [];
+  const p = [];
+  if (!liveDoc.body.textContent.includes("I lead the work personally.")) p.push("V2 leadership introduction missing");
+  if (liveDoc.body.textContent.includes("HOW TO USE DARIUS.LIFE")) p.push("old homepage policy remains");
+  if (liveDoc.querySelector('a[href*="recommendations"]')) p.push("private recommendations link exposed");
+  return p;
 });
 
 await check("<meta> CSP/referrer fallback present (kept per brief v2.1 check 13)", () => {
