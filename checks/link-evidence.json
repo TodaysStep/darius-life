@@ -7,6 +7,10 @@
     "211sandiego.org": {
       "why": "The housing-information page returned HTTP 403 with cf-mitigated: challenge on 2026-10-15. Verify the exact URL against the publisher's homepage or the recorded indexed page content below; a challenge alone is not evidence that the page exists.",
       "feed": "https://211sandiego.org/"
+    },
+    "michaeldarius.pixieset.com": {
+      "why": "GitHub Actions automated link requests received a bot challenge on 2026-10-25. The same approved portfolio opened normally in the cloud browser and visibly showed Michael Darius's photography collections. A challenge alone is not treated as proof.",
+      "feed": "https://michaeldarius.pixieset.com/"
     }
   },
   "recorded": {
@@ -18,6 +22,11 @@
       "provedAt": "2026-10-15",
       "method": "Two web-search indexes returned the publisher's page at this exact URL, titled Housing & Homelessness, with housing-resource content and a crawl age of two days. The publisher's indexed homepage also lists Housing Information. Direct automated requests returned a Cloudflare challenge; no direct HTTP 200 is claimed.",
       "source": "https://211sandiego.org/housing-information/"
+    },
+    "https://michaeldarius.pixieset.com": {
+      "provedAt": "2026-10-25",
+      "method": "Opened the exact approved URL in Chrome. It redirected to https://michaeldarius.pixieset.com/ with page title The Photography of Michael Darius, the matching heading, and visible photography collections including One More Thing 2025, Cocreate Conference 2025 and Tal Cohen Trio at The Black Cat. Browser accessibility snapshot verified the rendered page. GitHub's HTTP bot challenge is not claimed as HTTP 200.",
+      "source": "https://michaeldarius.pixieset.com/"
     }
   }
 }
