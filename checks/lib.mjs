@@ -136,7 +136,7 @@ export async function mapLimit(items, limit, fn) {
 }
 
 export function writeLocks(root) {
-  const manifestPath = path.join(root, "content/manifest.json");
+  const manifestPath = path.join(root, "content/homepage-v2.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const doc = loadDom(path.join(root, "dist/index.html"));
   for (const item of manifest.items) {
@@ -146,7 +146,7 @@ export function writeLocks(root) {
   }
   const text = formatManifest(manifest);
   fs.writeFileSync(manifestPath, text);
-  fs.writeFileSync(path.join(root, "manifest.lock"), `${sha256(text)}\n`);
+  fs.writeFileSync(path.join(root, "homepage-v2.lock"), `${sha256(text)}\n`);
   const terms = fs.readFileSync(path.join(root, "dist/terms.txt"), "utf8");
   fs.writeFileSync(path.join(root, "terms.lock"), `${sha256(terms)}\n`);
   console.log("lock: item hashes, manifest.lock and terms.lock written");
