@@ -82,7 +82,7 @@ function renderItem(item, ctx) {
     }
     case "text": {
       const dyn = item.dynamic === "updated" ? ` <span data-dynamic="updated">${ctx.updated}</span>` : "";
-      return `<p ${id}>${inline(item.text)}${dyn}</p>`;
+      return `<p ${id}>${inline(item.text).replace(/\n/g, "<br>")}${dyn}</p>`;
     }
     case "entry": {
       const note = item.note ? ` — ${inline(item.note)}` : "";
