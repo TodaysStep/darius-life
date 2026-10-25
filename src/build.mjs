@@ -82,7 +82,7 @@ function renderItem(item, ctx) {
     }
     case "text": {
       const dyn = item.dynamic === "updated" ? ` <span data-dynamic="updated">${ctx.updated}</span>` : "";
-      return `<p ${id}>${inline(item.text).replace(/\n/g, "<br>")}${dyn}</p>`;
+      return `<p ${id}>${inline(item.text)}${dyn}</p>`;
     }
     case "entry": {
       const note = item.note ? ` — ${inline(item.note)}` : "";
@@ -137,8 +137,7 @@ function renderSectionItems(items, ctx) {
 }
 
 export async function build() {
-  const manifest = readJSON("content/homepage-v2.json");
-  const canonical = readJSON("content/manifest.json");
+  const manifest = readJSON("content/manifest.json");
   const ctx = {
     status: readJSON("data/status.json"),
     projects: readJSON("data/projects.json"),
@@ -153,14 +152,15 @@ export async function build() {
   const body = [
     "<header>",
     ...bySection("identity").map((item) => renderItem(item, ctx)),
+    `<div class="indicators" data-section="status">\n${bySection("status").map((i) => renderItem(i, ctx)).join("\n")}\n</div>`,
     "</header>",
     "<main>",
-    ...["how", "building", "explore", "contact", "help"].map(section),
+    ...["terms", "notes", "legal", "projects", "help", "writing"].map(section),
     "</main>",
     `<footer data-section="footer">\n${renderSectionItems(bySection("footer"), ctx)}\n</footer>`,
   ].join("\n");
 
-  const terms = canonical.items.find((i) => i.id === "terms");
+  const terms = manifest.items.find((i) => i.id === "terms");
   const termsText = plainText(read(terms.source));
   const termsHash = sha256(termsText);
 
@@ -172,7 +172,7 @@ export async function build() {
   fs.writeFileSync(
     path.join(DIST, "verify", "index.html"),
     page("src/verify.html", {
-      HEADING: esc(canonical.sections.find((s) => s.id === "terms").heading),
+      HEADING: esc(heading("terms")),
       TERMS: renderBlocks(read(terms.source), { plain: true }),
       HASH: termsHash,
       EFFECTIVE: terms.effective,

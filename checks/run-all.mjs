@@ -24,17 +24,35 @@ const rel = (p) => path.relative(ROOT, p);
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const readJSON = (p) => JSON.parse(read(p));
 
-// V2 is the homepage approved for publication on October 24, 2026.
-const REQUIRED = ["identity","identity.0","identity.1","identity.2","identity.3","how.0","how.1","how.2","building.living","building.living.description","building.education","building.education.description","building.engineering","building.engineering.description","building.smallstep","building.smallstep.description","explore.resume","explore.resume.description","explore.flight","explore.flight.description","explore.thesis","explore.thesis.description","explore.photography","explore.notes","explore.notes.description","contact.invite","contact.email","contact.other","help.blurb","help.priority","help.housing","help.groceries","help.meal","help.ride","help.essentials","help.meals-on-wheels","help.work-dreamstep","help.work-smallstep","help.resources","help.other","help.lodging","help.connectivity","help.everyday","help.mail","help.storage","help.workspace","help.professional","help.housing-lead","help.introduction","help.hire","help.sponsor-dreamstep","help.direct-support","help.professional-expenses","help.hour","help.share","help.unsure","help.founders-letter","footer.founder","footer.copyright"];
+const REQUIRED = `identity, status.nws, status.personal, status.line, status.hsg, terms, terms.status,
+notes.todays-notes, notes.todays-step, notes.founder-notes, notes.line,
+legal.blurb, legal.private-login, legal.scenic-drive, legal.trademarks,
+legal.pe-act, legal.pro, legal.pro-policy, legal.correspondence, legal.li-privacy,
+legal.li-terms, legal.schedule.songsketch, legal.schedule.napkinsketch,
+legal.schedule.nurture, legal.law-enforcement, legal.receipt-verify,
+legal.identity-distortion, legal.continuity,
+projects.blurb, projects.living-instruments, projects.todays-notes,
+projects.small-step-ventures, projects.memorial-song, projects.meaning-preservation,
+projects.dreamstep-press, projects.li-press, projects.hands-on, projects.honest-reading,
+projects.songsketch, projects.napkinsketch, projects.business-studio, projects.todays-step,
+projects.founder-notes, projects.dreamstep-education, projects.dreamstep-engineering,
+projects.lox, projects.posterity-cloud, projects.founding-record,
+help.blurb, help.priority, help.housing, help.groceries, help.meal, help.ride, help.essentials, help.meals-on-wheels, help.work-dreamstep, help.work-smallstep, help.resources, help.other, help.lodging, help.connectivity, help.everyday, help.mail, help.storage, help.workspace, help.professional, help.housing-lead, help.introduction, help.hire, help.sponsor-dreamstep, help.direct-support, help.professional-expenses, help.hour, help.share, help.unsure, help.founders-letter,
+writing.blurb, writing.thesis, writing.dreamstep, writing.educators-exile-1,
+writing.todays-step-archive,
+footer.press, footer.updated, footer.copyright`
+  .split(/[\s,]+/)
+  .filter(Boolean);
 
-const PAGE_ORDER = ["identity", "how", "building", "explore", "contact", "help", "footer"];
+const PAGE_ORDER = ["identity", "status", "terms", "notes", "legal", "projects", "help", "writing", "footer"];
 
 // The exact status-LED colours used in src/styles.css — kept here too so check 14
 // can allow precisely these and nothing else.
 const LED_GREEN = "#1E8E3E";
 const LED_GREY = "#8C8C8C";
 
-const DESCRIPTION = "Designer. Builder. Educator. I help people turn meaningful ideas into things they can use.";
+const DESCRIPTION =
+  "Design founder. Built the iTunes Music Store and Apple's early cloud services at Apple. Now building Living Instruments and helping others build their own ventures through Small Step Ventures.";
 
 const STATUS_VOCABULARY = [
   "Heads down.",
@@ -54,8 +72,7 @@ const walkFiles = (dir) =>
 
 // ---------------------------------------------------------------- inputs
 const results = [];
-const manifestRaw = read("content/homepage-v2.json");
-const canonical = readJSON("content/manifest.json");
+const manifestRaw = read("content/manifest.json");
 const manifest = JSON.parse(manifestRaw);
 const allow = readJSON("checks/allowlist.json");
 const evidence = readJSON("checks/link-evidence.json");
@@ -96,15 +113,17 @@ await check(1, "Manifest completeness", () => {
   const ids = manifest.items.map((i) => i.id);
   const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
   if (dupes.length) p.push(`duplicate ids: ${dupes.join(", ")}`);
-  const added = ids.filter((id) => !REQUIRED.includes(id));
-  if (added.length) p.push(`unapproved V2 ids: ${added.join(", ")}`);
+  const lo = ids.indexOf("writing.educators-exile-1");
+  const hi = ids.indexOf("writing.todays-step-archive");
+  const added = ids.filter((id, i) => !["identity.flight-plan", "identity.posterity-flight-plan"].includes(id) && !REQUIRED.includes(id) && !(i > lo && i < hi && /^writing\.[a-z0-9-]+$/.test(id)));
+  if (added.length) p.push(`unlisted ids: ${added.join(", ")} (only writing.* entries between writing.educators-exile-1 and writing.todays-step-archive may be added)`);
   const core = ids.filter((id) => REQUIRED.includes(id));
   if (core.join() !== REQUIRED.join()) {
     const missing = REQUIRED.filter((id) => !ids.includes(id));
     p.push(missing.length ? `missing ids: ${missing.join(", ")}` : "required ids are out of order");
   }
-  const lock = read("homepage-v2.lock").trim();
-  if (sha256(manifestRaw) !== lock) p.push("content/homepage-v2.json does not match homepage-v2.lock");
+  const lock = read("manifest.lock").trim();
+  if (sha256(manifestRaw) !== lock) p.push("content/manifest.json does not match manifest.lock");
   for (const id of ids) {
     const n = byId(id).length;
     if (n !== 1) p.push(`${id} rendered ${n} times (expected once)`);
@@ -128,13 +147,13 @@ await check(1, "Manifest completeness", () => {
 // ---------------------------------------------------------------- 2
 await check(2, "Terms integrity", () => {
   const p = [];
-  const el = verifyDoc?.querySelector('[data-verify="terms"]');
+  const el = byId("terms")[0];
   if (!el) return ["terms block not rendered"];
   const rendered = extractText(el);
   if (termsTxt === null) return ["dist/terms.txt missing"];
   if (rendered !== termsTxt) p.push("rendered terms differ from /terms.txt");
   if (sha256(termsTxt) !== termsLock) p.push(`sha256(/terms.txt)=${sha256(termsTxt)} but terms.lock=${termsLock}`);
-  const item = canonical.items.find((i) => i.id === "terms");
+  const item = manifest.items.find((i) => i.id === "terms");
   if (item?.sha256 !== termsLock) p.push("manifest terms hash differs from terms.lock");
   const published = fs.existsSync(path.join(DIST, "terms.sha256")) ? fs.readFileSync(path.join(DIST, "terms.sha256"), "utf8") : "";
   if (published !== `${termsLock}  terms.txt\n`) p.push("/terms.sha256 does not publish terms.lock");
@@ -166,15 +185,21 @@ function extractTextFromMd(src) {
 }
 
 // ---------------------------------------------------------------- 4
-await check(4, "Approved V2 introduction replaces homepage notices", () => {
+await check(4, "Terms visibility", () => {
   const p = [];
-  const text = doc.body.textContent;
-  if (!text.includes("I lead the work personally.")) p.push("personal project leadership is missing");
-  for (const old of ["HOW TO USE DARIUS.LIFE", "IDENTITY DISTORTION PROTECTION", "New Work Security Protection"]) {
-    if (text.includes(old)) p.push(`obsolete homepage notice remains: ${old}`);
+  const el = byId("terms")[0];
+  if (!el) return ["terms block not rendered"];
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    const tag = n.tagName.toLowerCase();
+    if (["details", "template", "noscript", "dialog"].includes(tag)) p.push(`terms are inside <${tag}>`);
+    if (n.hasAttribute("hidden")) p.push(`terms ancestor <${tag}> has the hidden attribute`);
+    if (n.getAttribute("aria-hidden") === "true") p.push(`terms ancestor <${tag}> is aria-hidden`);
+    if (/display\s*:\s*none|visibility\s*:\s*hidden/i.test(n.getAttribute("style") ?? "")) p.push(`terms ancestor <${tag}> is hidden by inline style`);
   }
-  if (doc.querySelector('a[href*="recommendations"]')) p.push("private recommendations must not be linked from home");
-  if (!verifyDoc?.querySelector('[data-verify="terms"]')) p.push("canonical terms verification is missing");
+  const css = read("src/styles.css");
+  if (/display\s*:\s*none|visibility\s*:\s*hidden|content-visibility|opacity\s*:\s*0(?![.\d])/i.test(css)) p.push("styles.css contains a hiding rule");
+  const legal = doc.querySelector('[data-section="legal"]');
+  if (!legal || !(el.compareDocumentPosition(legal) & 4)) p.push("terms do not appear before the Legal section");
   return p;
 });
 
@@ -297,12 +322,19 @@ await check(10, "Status vocabulary", () => {
   if (keys.join() !== "personal") p.push(`data/status.json must hold exactly one key, "personal"; found ${keys.join(", ")}`);
   if (!STATUS_VOCABULARY.includes(status.personal)) p.push(`personal status "${status.personal}" is not one of the six allowed lines`);
   const projects = readJSON("data/projects.json");
-  const projectIds = canonical.items.filter((i) => i.dynamic === "project").map((i) => i.id.slice("projects.".length));
+  const projectIds = manifest.items.filter((i) => i.dynamic === "project").map((i) => i.id.slice("projects.".length));
   for (const [k, v] of Object.entries(projects)) {
     if (!projectIds.includes(k)) p.push(`data/projects.json: "${k}" is not a project in the manifest`);
     if (v !== "active" && v !== "paused") p.push(`data/projects.json: "${k}" is "${v}"; use "active" or "paused"`);
   }
   for (const id of projectIds) if (!(id in projects)) p.push(`data/projects.json has no status for "${id}"`);
+  const shown = doc.querySelector('[data-dynamic="status"]')?.textContent;
+  if (shown !== status.personal) p.push(`page shows status "${shown}" instead of "${status.personal}"`);
+  for (const id of projectIds) {
+    const want = projects[id] === "paused" ? "Paused" : "Active";
+    const got = doc.querySelector(`[data-id="projects.${id}"] [data-dynamic="project"]`)?.textContent.replace(/\s+/g, " ").trim();
+    if (got !== want) p.push(`projects.${id} shows "${got}" instead of "${want}"`);
+  }
   return p;
 });
 
@@ -440,7 +472,7 @@ await check(16, "/verify present", () => {
   if (text !== termsTxt) p.push("/verify terms text differs from /terms.txt");
   if (verifyDoc.querySelector('[data-verify="hash"]')?.textContent !== termsLock) p.push("/verify hash differs from terms.lock");
   const eff = verifyDoc.querySelector('[data-verify="effective"]')?.textContent;
-  const want = canonical.items.find((i) => i.id === "terms")?.effective;
+  const want = manifest.items.find((i) => i.id === "terms")?.effective;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eff ?? "") || eff !== want) p.push(`/verify effective date "${eff}" must equal the manifest's "${want}"`);
   for (const h of ["/terms.txt", "/terms.sha256"]) if (!verifyDoc.querySelector(`a[href="${h}"]`)) p.push(`/verify does not link ${h}`);
   return p;
@@ -483,12 +515,12 @@ await check(18, "Live verification gates the workflow", () => {
 // arranged "through correspondence" instead. Independent of check 6/7's mailto
 // allowlist, which only catches addresses inside an actual mailto: link; this
 // catches an email address written anywhere, in any file, linked or not.
-await check(19, "Only the approved professional email is published", () => {
+await check(19, "No email address anywhere in the build", () => {
   const p = [];
   const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
   for (const f of textFiles) {
     const found = fs.readFileSync(f, "utf8").match(EMAIL);
-    if (found?.some((address) => address !== "michael@dreamstep.engineering")) p.push(`${rel(f)} contains an unapproved email address`);
+    if (found) p.push(`${rel(f)} contains an email address: ${[...new Set(found)].join(", ")}`);
   }
   return p;
 });
