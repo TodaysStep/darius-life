@@ -13,7 +13,7 @@ test("root serves generic Bench Notes identity without private data or automatic
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("location"), null);
   const html = await res.text();
-  assert.match(html, /Bench Notes — Confidential Access/);
+  assert.match(html, /<title>Bench Notes<\/title>/);
   assert.match(html, /href="\/bench\/"/);
   assert.match(html, /bench-frontdoor.css/);
 });
