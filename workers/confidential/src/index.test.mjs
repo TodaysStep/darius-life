@@ -8,10 +8,20 @@ import worker from "./index.js";
 // dispatched, without needing a real token.
 const env = {};
 
-test("the bare hostname (no path at all) redirects to /bench/ — Access sends a browser back to exactly the path it first tried, and that used to be a real 404, not a cosmetic one", async () => {
+test("root serves generic Bench Notes identity without private data or automatic Access redirect", async () => {
   const res = await worker.fetch(new Request("https://confidential.darius.life/"), env);
-  assert.equal(res.status, 302);
-  assert.equal(res.headers.get("location"), "https://confidential.darius.life/bench/");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("location"), null);
+  const html = await res.text();
+  assert.match(html, /Bench Notes — Confidential Access/);
+  assert.match(html, /href="\/bench\/"/);
+  assert.match(html, /bench-frontdoor.css/);
+});
+test("same-origin stylesheet is public but contains only generic presentation", async () => {
+  const res = await worker.fetch(new Request("https://confidential.darius.life/bench-frontdoor.css"), env);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("Content-Type"), /text\/css/);
+  assert.match(await res.text(), /#E9E0CC/);
 });
 
 test("GET /bench/ is dispatched to the working-side handler (forbidden with no Access token, not 404)", async () => {
@@ -38,3 +48,4 @@ test("a genuinely unknown path outside /bench/ (not just the bare root) is a rea
   const res = await worker.fetch(new Request("https://confidential.darius.life/something-else"), env);
   assert.equal(res.status, 404);
 });
+
