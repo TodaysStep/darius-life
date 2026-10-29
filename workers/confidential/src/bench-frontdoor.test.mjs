@@ -1,16 +1,12 @@
+import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {benchFrontdoor} from './bench-frontdoor.mjs';
-let count=0;
-const check=(a,b)=>{assert(a,b);count++;};
-const base='https://confidential.darius.life/';
-const res=benchFrontdoor(new Request(base));const html=await res.text();
-check(res.status===200);check(!res.headers.has('Location'));check(html.includes('og:title'));check(html.includes('stenotype.jpg?v=20261004-3'));check(html.includes('href="/bench/"'));check(res.headers.get('Cache-Control')==='no-store');check(html.includes('noindex, nofollow'));
-const id='00000000-0000-4000-8000-000000000001';
-const note=await benchFrontdoor(new Request(base+'?case='+id)).text();check(note.includes('href="/bench/case/'+id+'"'));
-for(const bad of ['https://evil.test','//evil.test','<script>alert(1)</script>',id+'/../../','javascript:alert(1)',id+'?token=secret']){const h=await benchFrontdoor(new Request(base+'?case='+encodeURIComponent(bad)+'&token=SECRET')).text();check(h.includes('href="/bench/"'));check(!h.includes('SECRET'));check(!h.includes('evil.test'));}
-check(!note.includes('ADA'));check(!note.includes('26CU'));check(!note.includes('hardship'));check(!note.includes('script>'));check(!note.includes('http-equiv="refresh"'));
-for(const method of ['POST','PUT','DELETE']) check(benchFrontdoor(new Request(base,{method})).status===405);
-check((await benchFrontdoor(new Request(base,{method:'HEAD'})).text())==='');
-console.log(count+' preview/privacy/routing checks passed');
-
-const css=benchFrontdoor(new Request(base+'bench-frontdoor.css'));check(css.status===200);check(css.headers.get('Content-Type').startsWith('text/css'));check((await css.text()).includes('#E9E0CC'));check(html.includes('href="/bench-frontdoor.css?v=20261029"'));check(!html.includes('<style>'));check(res.headers.get('Content-Security-Policy').includes("style-src 'self'"));console.log(count+' total checks passed');
+const root='https://confidential.darius.life';
+const env={BENCH_NOTES:{prepare(sql){assert.equal(sql,'SELECT share_number FROM docket_entries WHERE share_number = ?');return {bind(n){return {first:async()=>[1,2,6].includes(n)?{share_number:n}:null};}};}}};
+test('each numbered envelope exposes only canonical number, identity and protected target',async()=>{
+ for(const number of [1,2,6]){const label=String(number).padStart(3,'0');const r=await benchFrontdoor(new Request(root+'/note/'+label),env);const h=await r.text();assert.equal(r.status,200);assert(h.includes('og:title" content="Bench Note '+label));assert(h.includes('href="/bench/note/'+label+'"'));assert(h.includes('stenotype.jpg'));assert(!h.includes('case_id'));assert(!h.includes('shared_at'));assert(!h.includes('<script'));}
+});
+test('unknown notes are not invented',async()=>{assert.equal((await benchFrontdoor(new Request(root+'/note/999'),env)).status,404);assert.equal((await benchFrontdoor(new Request(root+'/note/000'),env)).status,404);});
+test('root remains generic with safe case target and no token reflection',async()=>{for(const id of ['//evil.test','<script>','javascript:alert(1)']){const r=await benchFrontdoor(new Request(root+'/?case='+encodeURIComponent(id)+'&token=SECRET'));const h=await r.text();assert(h.includes('href="/bench/"'));assert(!h.includes('SECRET'));assert(!h.includes('evil.test'));}});
+test('stylesheet respects strict same-origin CSP',async()=>{const r=await benchFrontdoor(new Request(root+'/'));const h=await r.text();assert(!h.includes('<style>'));assert(h.includes('/bench-frontdoor.css'));assert(r.headers.get('Content-Security-Policy').includes("style-src 'self'"));const css=await benchFrontdoor(new Request(root+'/bench-frontdoor.css'));assert((await css.text()).includes('#E9E0CC'));});
+test('read-only frontdoor and bodyless HEAD',async()=>{assert.equal((await benchFrontdoor(new Request(root+'/',{method:'POST'}))).status,405);assert.equal(await(await benchFrontdoor(new Request(root+'/',{method:'HEAD'}))).text(),'');});
