@@ -12,6 +12,7 @@
 //                (bench-entrusted.js). It is its own complete authentication
 //                boundary, so the Access application must cover /bench/* only,
 //                not this whole hostname/Worker (see docs/cloudflare-setup.md).
+import { benchFrontdoor } from "./bench-frontdoor.mjs";
 import { PREFIX as ENTRUSTED_PREFIX, handleBenchEntrustedGet, handleBenchEntrustedPost } from "./bench-entrusted.js";
 import { PREFIX as BENCH_PREFIX, handleBenchGet, handleBenchPost, handleBenchPut } from "./bench-working.js";
 import { handleEvidenceRoom } from './bench-evidence-room.js';
@@ -40,12 +41,9 @@ export default {
     if (url.pathname.startsWith('/evidence-api/')) return handleEvidenceApi(request, env, url);
     if (url.pathname === '/bench/evidence' || url.pathname.startsWith('/bench/evidence/')) return handleEvidenceRoom(request, env, url);
 
-    // Cloudflare Access sends a browser back to exactly the path it first
-    // tried, after login — so visiting the bare hostname with no path at
-    // all lands here on "/" post-login, which this Worker has never served
-    // (it only ever served /bench/*): a real 404, not a cosmetic one, the
-    // first time anyone lands on the bare domain rather than a /bench/ link.
-    if (url.pathname === "/") return Response.redirect(`https://${url.host}${BENCH_PREFIX}`, 302);
+    // Public, generic identity only; the explicit owner link still enters
+    // the unchanged /bench/* Access boundary. CSS is same-origin for CSP.
+    if (url.pathname === "/" || url.pathname === "/bench-frontdoor.css") return benchFrontdoor(request);
 
     if (url.pathname.startsWith(BENCH_PREFIX)) {
       if (request.method === "GET") return handleBenchGet(request, env, url);
@@ -71,3 +69,4 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
+
