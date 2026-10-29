@@ -43,7 +43,7 @@ export default {
 
     // Public, generic identity only; the explicit owner link still enters
     // the unchanged /bench/* Access boundary. CSS is same-origin for CSP.
-    if (url.pathname === "/" || url.pathname === "/bench-frontdoor.css") return benchFrontdoor(request);
+    if (url.pathname === "/" || url.pathname === "/bench-frontdoor.css" || /^\/note\/[0-9]{1,9}$/.test(url.pathname)) return benchFrontdoor(request, env);
 
     if (url.pathname.startsWith(BENCH_PREFIX)) {
       if (request.method === "GET") return handleBenchGet(request, env, url);
