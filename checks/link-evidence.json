@@ -1,5 +1,13 @@
 {
   "botWalledHosts": {
+    "newworksecurity.com": {
+      "why": "The GitHub release runner received a bot challenge on 2026-11-02 while a separate direct publisher GET returned HTTP 200 and the New Work Security page. A challenge alone is not proof.",
+      "feed": "https://newworksecurity.com/"
+    },
+    "www.doordash.com": {
+      "why": "The GitHub release runner received a bot challenge on 2026-11-02. Independent publisher retrieval and a separate direct GET verified the exact gift-cards URL; other URLs are not covered by that recorded proof.",
+      "feed": "https://www.doordash.com/gift-cards/"
+    },
     "darius.medium.com": {
       "why": "Medium answers every automated request, including real headless browsers, with a Cloudflare challenge (HTTP 403, cf-mitigated: challenge). A missing post returns the same 403, so the challenge alone proves nothing.",
       "feed": "https://medium.com/feed/@darius"
@@ -10,6 +18,16 @@
     }
   },
   "recorded": {
+    "https://newworksecurity.com": {
+      "provedAt": "2026-11-02",
+      "method": "Independent direct publisher GET at 2026-11-02T05:52:58.323Z returned HTTP 200, final URL https://newworksecurity.com/, title New Work Security, 54765 bytes, SHA256 d862944fe6495b78de1d6b2bff97332221175c27ccddbd1bf58ced275afb0414. The GitHub CI response remains a bot challenge; no CI HTTP 200 is claimed.",
+      "source": "https://newworksecurity.com/"
+    },
+    "https://www.doordash.com/gift-cards/": {
+      "provedAt": "2026-11-02",
+      "method": "Independent direct publisher GET at 2026-11-02T05:53:03.426Z returned HTTP 200 at this exact URL, title Buy Gift Cards Online: 100+ Brands with DashPass Discounts | DoorDash, 2076257 bytes, SHA256 de427794c7585d2e1ecf7cae162d310f33c9842c9d0b1a99c4264855aa51a941. The official page was also retrieved through the web reader with gift-card content. GitHub CI remains challenged; no CI HTTP 200, purchase or delivery is claimed.",
+      "source": "https://www.doordash.com/gift-cards/"
+    },
     "https://darius.medium.com/design-educators-in-exile-the-forgotten-architects-of-civic-stability-836f51f6112b": {
       "provedAt": "2026-09-27",
       "method": "Listed as an item link in https://medium.com/feed/@darius (HTTP 200)."
