@@ -599,6 +599,11 @@ await check(21, "Personal support page and payment destination", () => {
   return p;
 });
 
+await check(22, "Proxy challenge classification requires independent evidence", () => {
+  const regression = spawnSync(process.execPath, ["--test", "checks/link-challenge.test.mjs"], { cwd: ROOT, encoding: "utf8" });
+  return regression.status === 0 ? [] : [regression.stdout + regression.stderr];
+});
+
 // ---------------------------------------------------------------- report
 let failed = 0;
 for (const r of results.sort((a, b) => a.n - b.n)) {
