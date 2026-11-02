@@ -7,6 +7,11 @@ on:
       - "checks/**"
       - "src/styles.css"
       - ".github/workflows/human-stewardship-pr.yml"
+      - ".github/workflows/deploy.yml"
+      - ".node-version"
+      - "package*.json"
+      - "scripts/**"
+      - "workers/**"
   push:
     branches: ["site-update/human-stewardship-20261023"]
 permissions:
@@ -29,3 +34,11 @@ jobs:
         run: npm run build
       - name: Site-specific placement, origin and preservation checks
         run: node --test checks/hsg-link.test.mjs
+      - name: Verify recovered Worker builds and baseline guards
+        run: node --test scripts/build-worker-runtime.test.mjs scripts/verify-worker-baseline.test.mjs
+      - name: Package Workers with the pinned release CLI without uploading
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          (cd workers/private-legal && npx --yes wrangler@4.152.0 deploy --dry-run)
+          (cd workers/confidential && npx --yes wrangler@4.152.0 deploy --dry-run)
