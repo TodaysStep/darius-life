@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
+      - name: Verify recovered runtime build and baseline guards
+        run: node --test scripts/build-worker-runtime.test.mjs scripts/verify-worker-baseline.test.mjs workers/confidential/src/bench-frontdoor.test.mjs workers/confidential/src/index.test.mjs
       - name: Verify evidence preservation and authorization
         run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs
   build:
@@ -59,21 +61,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci
+      - name: Verify the existing private Worker baseline
+        run: node scripts/verify-worker-baseline.mjs private-legal
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/private-legal
-          command: deploy
-          # Uploaded to the Worker as an encrypted secret (wrangler secret put),
-          # never baked into the bundle. The control panel (/control/*) uses it
-          # to read and commit data/status.json and data/projects.json via the
-          # GitHub API — a fine-grained PAT scoped to only this repo, Contents:
-          # Read and write.
-          secrets: |
-            GH_COMMIT_TOKEN
-        env:
-          GH_COMMIT_TOKEN: ${{ secrets.GH_COMMIT_TOKEN }}
+          wranglerVersion: '4.152.0'
+          command: deploy --keep-vars
 
   deploy-confidential-worker:
     needs: build
@@ -84,30 +87,19 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm ci
+      - name: Verify the existing confidential Worker baseline
+        run: node scripts/verify-worker-baseline.mjs confidential
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Existing encrypted bindings survive code deployment; do not rotate them here.
       - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/confidential
-          command: deploy
-          # No secrets uploaded through the action itself; the entrusted section's
-          # signing key is handled by the step below.
-      # The entrusted section (/entrusted/*, "everybody else") signs its session
-      # cookie with ENTRUSTED_COOKIE_SECRET. Use the repo secret if one is set;
-      # otherwise make sure the Worker has SOME key (generated here, never logged)
-      # so guests can always sign in. Rotating it signs out every open guest session.
-      - name: Make sure the entrusted section has its cookie-signing secret
-        working-directory: workers/confidential
-        run: |
-          if [ -n "$ENTRUSTED_COOKIE_SECRET" ]; then
-            npx wrangler secret put ENTRUSTED_COOKIE_SECRET <<< "$ENTRUSTED_COOKIE_SECRET"
-          elif ! npx wrangler secret list | grep -q '"ENTRUSTED_COOKIE_SECRET"'; then
-            openssl rand -hex 32 | npx wrangler secret put ENTRUSTED_COOKIE_SECRET
-          fi
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ENTRUSTED_COOKIE_SECRET: ${{ secrets.ENTRUSTED_COOKIE_SECRET }}
+          wranglerVersion: '4.152.0'
+          command: deploy --keep-vars
 
   verify-live:
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live

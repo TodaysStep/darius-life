@@ -80,8 +80,14 @@ export const LINKCHECK_UA = "Mozilla/5.0 (compatible; darius-life-linkcheck/1.0;
 export async function isChallenge(r) {
   if (r.status !== 403 && r.status !== 503) return false;
   if ((r.headers.get("cf-mitigated") ?? "").includes("challenge")) return true;
-  if (!/cloudflare/i.test(r.headers.get("server") ?? "")) return false;
-  return /challenge-platform|Just a moment\.\.\.|Attention Required! \| Cloudflare/.test(await r.text());
+  const html = await r.text();
+  if (/cloudflare/i.test(r.headers.get("server") ?? "")) {
+    return /challenge-platform|Just a moment\.\.\.|Attention Required! \| Cloudflare/.test(html);
+  }
+  // A proxy can replace Server while preserving the explicit block page.
+  return /<title>\s*Attention Required!\s*\|\s*Cloudflare\s*<\/title>/i.test(html)
+    && /\/cdn-cgi\/styles\/cf\.errors(?:\.ie)?\.css\b/.test(html)
+    && /\bid=["']cf-wrapper["']/.test(html);
 }
 
 export async function fetchOnce(url, redirect) {

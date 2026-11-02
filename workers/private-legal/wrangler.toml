@@ -22,8 +22,18 @@
 # (workers/shared/bench-data.js) — it just isn't itself behind that Access
 # application, for the reason given above.
 name = "darius-life-private-legal"
-main = "src/index.js"
+main = "dist/index.js"
+no_bundle = true
+find_additional_modules = true
 compatibility_date = "2026-09-27"
+
+[build]
+command = "node ../../scripts/build-worker-runtime.mjs private-legal"
+
+[[rules]]
+type = "ESModule"
+globs = ["**/*.mjs"]
+fallthrough = true
 
 [[routes]]
 pattern = "darius.life/legal/private/*"
@@ -62,16 +72,19 @@ ACCESS_TEAM_DOMAIN = "dreamstep.cloudflareaccess.com"
 ACCESS_AUD = "e976eb5d7bb3347de066bdba3b7b0b802d896f68eccb2a3ca752a124f78e9912"
 GITHUB_REPO = "TodaysStep/darius-life"
 GITHUB_BRANCH = "main"
+POSTERITY_STORAGE_PROVIDER = "r2"
+
+[[services]]
+binding = "POSTERITY_STORAGE"
+service = "posterityos-storage-service"
+environment = "production"
 # ENTRUSTED_COOKIE_SECRET is a secret, not a var. HMAC-signs the Bench Notes
 # entrusted side's session cookie; rotating it instantly invalidates every
-# open session. Not yet set anywhere — add it as a GH repo secret (Settings →
-# Secrets and variables → Actions, any random 32+ byte value) and deploy.yml's
-# separate "Upload the Bench Notes entrusted-side cookie secret" step picks it
-# up automatically on the next push. Until then it's simply unset, and
-# bench-entrusted.js's session signing/verification will fail closed.
-# GH_COMMIT_TOKEN is a secret, not a var — set with
-# `wrangler secret put GH_COMMIT_TOKEN` or via deploy.yml's wrangler-action
-# `secrets` input (see .github/workflows/deploy.yml and docs/cloudflare-setup.md).
+# open session. The existing production binding is retained during deployment;
+# verify its presence without retrieving its value. Rotate only after identifying
+# dependent services and recovery access.
+# GH_COMMIT_TOKEN is a secret, not a var. The deployment baseline verifies its
+# existing binding and the deployment preserves it without uploading a new value.
 # A fine-grained GitHub PAT scoped to only this repo, Contents: Read and write.
 # BENCH_API_KEY is a secret, not a var. The bearer token bench-api.js checks
 # on every request — anyone holding it can write to the entire Bench Notes

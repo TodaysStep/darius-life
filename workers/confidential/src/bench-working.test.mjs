@@ -1338,3 +1338,18 @@ test("scripture research with nothing curated yet says so plainly, without calli
   assert.match(await res.text(), /Nothing curated yet/);
   assert.equal(calls, 0);
 });
+
+test('individual numbered note requires Access before any database read', async () => {
+  const request = new Request('https://confidential.darius.life/bench/note/006');
+  const response = await handleBenchGet(request, {}, new URL(request.url));
+  assert.equal(response.status, 403);
+});
+test('individual numbered note renders exact entry, not the case timeline', async () => {
+  const {token,jwk}=await validToken();const {env,fakeD1}=setup(jwk);
+  fakeD1.tables.cases.push({id:'synthetic-case',title:'Synthetic case',status:'open'});
+  fakeD1.tables.docket_entries.push({id:'synthetic-note',case_id:'synthetic-case',share_number:6,shared_at:null,entry_date:'2026-01-01',fact:'TARGET ENTRY ONLY',source:'manual',entry_kind:'note'});
+  fakeD1.tables.docket_entries.push({id:'other-note',case_id:'synthetic-case',share_number:5,shared_at:null,entry_date:'2026-01-01',fact:'UNRELATED ENTRY MUST BE ABSENT',source:'manual',entry_kind:'note'});
+  const request=authedRequest('https://confidential.darius.life/bench/note/006',token);
+  const response=await handleBenchGet(request,env,new URL(request.url));const text=await response.text();
+  assert.equal(response.status,200);assert.match(text,/Bench Note 006/);assert.match(text,/TARGET ENTRY ONLY/);assert.doesNotMatch(text,/UNRELATED ENTRY MUST BE ABSENT/);assert.equal(fakeD1.tables.docket_entries[0].shared_at,null);
+});

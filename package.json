@@ -22,5 +22,8 @@
     "postal-mime": "2.4.3",
     "unpdf": "1.4.0",
     "wawoff2": "^2.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.3"
   }
 }
