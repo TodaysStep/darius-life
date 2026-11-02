@@ -1114,6 +1114,17 @@ export async function handleBenchGet(request, env, url) {
       );
     }
 
+    const noteMatch = path.match(/^note\/([0-9]{1,9})$/);
+    if (noteMatch) {
+      const entry = await env.BENCH_NOTES.prepare("SELECT * FROM docket_entries WHERE share_number = ?").bind(Number(noteMatch[1])).first();
+      if (!entry) return notFound();
+      const caseRow = await getCase(env, entry.case_id);
+      if (!caseRow) return notFound();
+      const base = `${PREFIX}case/${escapeHtml(caseRow.id)}`;
+      const documents = (await listDocuments(env, caseRow.id)).filter(d => d.entry_id === entry.id);
+      return html(benchPage(`Bench Note ${String(entry.share_number).padStart(3, "0")}`, `<header class="bench-header">${STENOTYPE_ICON()}<h1>Bench Note ${String(entry.share_number).padStart(3, "0")}</h1></header><p class="note"><a href="${base}">&larr; Back to ${escapeHtml(caseRow.title)}</a></p>${renderEntry(base, entry, documents)}`));
+    }
+
     const caseMatch = path.match(/^case\/([^/]+)$/);
     if (caseMatch) {
       const caseRow = await getCase(env, caseMatch[1]);

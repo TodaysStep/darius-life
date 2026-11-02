@@ -1,0 +1,96 @@
+{
+  "private-legal": {
+    "name": "darius-life-private-legal",
+    "version": "3990b7fe-6506-4ab8-85f1-92d265f712d3",
+    "compatibility_date": "2026-09-27",
+    "secrets": [
+      "BENCH_API_KEY",
+      "ENTRUSTED_COOKIE_SECRET",
+      "GH_COMMIT_TOKEN",
+      "POSTERITY_STORAGE_TOKEN"
+    ],
+    "bindings": {
+      "ACCESS_AUD": {
+        "type": "plain_text",
+        "text": "e976eb5d7bb3347de066bdba3b7b0b802d896f68eccb2a3ca752a124f78e9912"
+      },
+      "ACCESS_TEAM_DOMAIN": {
+        "type": "plain_text",
+        "text": "dreamstep.cloudflareaccess.com"
+      },
+      "BENCH_NOTES": {
+        "type": "d1",
+        "database_id": "42490728-b48c-4332-ad61-559ebf589935"
+      },
+      "GITHUB_BRANCH": {
+        "type": "plain_text",
+        "text": "main"
+      },
+      "GITHUB_REPO": {
+        "type": "plain_text",
+        "text": "TodaysStep/darius-life"
+      },
+      "POSTERITY_STORAGE": {
+        "type": "service",
+        "service": "posterityos-storage-service",
+        "environment": "production"
+      },
+      "POSTERITY_STORAGE_PROVIDER": {
+        "type": "plain_text",
+        "text": "r2"
+      },
+      "PRIVATE_LEGAL": {
+        "type": "r2_bucket",
+        "bucket_name": "darius-life-private"
+      }
+    }
+  },
+  "confidential": {
+    "name": "darius-life-confidential",
+    "version": "cbfede88-a517-41b4-870a-773c814d5ccc",
+    "compatibility_date": "2026-09-28",
+    "secrets": [
+      "BENCH_INTAKE_SENDERS",
+      "BENCH_RETRIEVAL_KEY",
+      "ENTRUSTED_COOKIE_SECRET",
+      "POSTERITY_STORAGE_TOKEN",
+      "PROTECTED_STRINGS"
+    ],
+    "bindings": {
+      "ACCESS_AUD": {
+        "type": "plain_text",
+        "text": "64ae3dd22643411542618705ef6b6d3dd0b034bf3f990ece171ed006bbdb388c"
+      },
+      "ACCESS_TEAM_DOMAIN": {
+        "type": "plain_text",
+        "text": "dreamstep.cloudflareaccess.com"
+      },
+      "AI": {
+        "type": "ai"
+      },
+      "BENCH_DOCUMENTS": {
+        "type": "r2_bucket",
+        "bucket_name": "darius-life-private"
+      },
+      "BENCH_NOTES": {
+        "type": "d1",
+        "database_id": "42490728-b48c-4332-ad61-559ebf589935"
+      },
+      "BENCH_RECEIPTS": {
+        "type": "send_email",
+        "allowed_sender_addresses": [
+          "bench@intake.darius.life"
+        ]
+      },
+      "POSTERITY_STORAGE": {
+        "type": "service",
+        "service": "posterityos-storage-service",
+        "environment": "production"
+      },
+      "POSTERITY_STORAGE_PROVIDER": {
+        "type": "plain_text",
+        "text": "r2"
+      }
+    }
+  }
+}
