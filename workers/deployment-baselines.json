@@ -1,7 +1,7 @@
 {
   "private-legal": {
     "name": "darius-life-private-legal",
-    "version": "3990b7fe-6506-4ab8-85f1-92d265f712d3",
+    "version": "dd8fd084-1ab9-4901-b51f-1b4737990871",
     "compatibility_date": "2026-09-27",
     "secrets": [
       "BENCH_API_KEY",
@@ -47,7 +47,7 @@
   },
   "confidential": {
     "name": "darius-life-confidential",
-    "version": "cbfede88-a517-41b4-870a-773c814d5ccc",
+    "version": "7a050f78-334a-47bb-9883-eaa2d38b3bbb",
     "compatibility_date": "2026-09-28",
     "secrets": [
       "BENCH_INTAKE_SENDERS",
