@@ -15,6 +15,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   evidence-tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +29,10 @@ jobs:
       - name: Verify evidence preservation and authorization
         run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs workers/confidential/src/bench-working.test.mjs
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     needs: evidence-tests
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
