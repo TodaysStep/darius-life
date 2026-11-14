@@ -23,7 +23,7 @@ jobs:
       - name: Verify recovered runtime build and baseline guards
         run: node --test scripts/build-worker-runtime.test.mjs scripts/verify-worker-baseline.test.mjs workers/confidential/src/bench-frontdoor.test.mjs workers/confidential/src/index.test.mjs
       - name: Verify evidence preservation and authorization
-        run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs
+        run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs workers/confidential/src/bench-working.test.mjs
   build:
     needs: evidence-tests
     runs-on: ubuntu-latest
