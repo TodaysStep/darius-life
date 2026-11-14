@@ -1,6 +1,6 @@
 import { evidenceFileResponse } from '../../shared/evidence-file-response.js';
 import { requireAccess } from '../../shared/access.js';
-import { headers, benchPage, escapeHtml as esc } from '../../shared/bench-style.js';
+import { headers, benchWorkingPage as benchPage, escapeHtml as esc } from '../../shared/bench-style.js';
 import { renderEvidenceText, renderEvidenceAudio, renderEvidenceTranscript } from '../../shared/bench-rich-text.js';
 import { listEvidence, getEvidence, getEvidenceArtifact } from '../../shared/bench-evidence.js';
 

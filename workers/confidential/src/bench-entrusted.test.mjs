@@ -35,6 +35,9 @@ test("GET /entrusted/ with no cookie shows the login form, not the portal", asyn
   assert.equal(res.status, 200);
   const html = await res.text();
   assert.match(html, /Passphrase/);
+  assert.match(html, /background: #E9E0CC/);
+  assert.doesNotMatch(html, /data-bench-theme="white"/);
+  assert.doesNotMatch(html, /Bench Notes working surface: white/);
   assert.doesNotMatch(html, /Sign out/);
 });
 

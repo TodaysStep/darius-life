@@ -29,6 +29,8 @@ async function fixture(t){
 
 test('owner sees contextual claims, cited quotation, retries and explicit full-intake sharing control',async t=>{
  const {request}=await fixture(t);const res=await request('intake');assert.equal(res.status,200);const html=await res.text();
+ assert.match(html,/data-bench-theme="white"/);
+ assert.match(html,/Bench Notes working surface: white/);
  for(const expected of ['Context to review','Hearing October 16','Hearing on October 16.','page 2','System inference','Retry failed processing','Link privately','approve_full_intake','Share full intake with this note'])assert.ok(html.includes(expected),expected);
  assert.doesNotMatch(html,/&quot;claims&quot;/);
 });

@@ -1,8 +1,7 @@
-// Shared visual identity for both Bench Notes sides — the working side
-// (src/bench-working.js) and the entrusted side (src/bench-entrusted.js).
-// Vintage stenographer aesthetic: aged-paper tones, a ticker-tape rule under
-// headings, dense monospaced timestamps. Deliberately shared so the two
-// sides look like one product even though their code never shares a query.
+// Shared base palette for both Bench Notes sides. The private working
+// docket and evidence room layer a white reading surface through
+// benchWorkingPage; the separate Entrusted area retains the original paper
+// treatment and its distinct sharing boundary.
 export const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 export const headers = (contentType) => ({
@@ -202,3 +201,31 @@ export const benchPage = (title, body, { csp = "default-src 'self'; style-src 's
 <title>${escapeHtml(title)} · Bench Notes</title>
 <style>${STYLE}</style>
 </head><body><div class="page">${body}</div></body></html>`;
+// The working docket and its evidence room are reading surfaces, not paper
+// envelopes. Keep this override separate from benchPage so Entrusted pages
+// retain their existing presentation and passphrase-scoped sharing behavior.
+const WORKING_WHITE_STYLE = [
+  "/* Bench Notes working surface: white */",
+  ":root { color-scheme: light !important; }",
+  "html[data-bench-theme=\"white\"], html[data-bench-theme=\"white\"] body { background: #fff !important; background-image: none !important; color: #2A2318 !important; }",
+  "html[data-bench-theme=\"white\"] .page { background: #fff !important; color: #2A2318 !important; }",
+  "html[data-bench-theme=\"white\"] h1, html[data-bench-theme=\"white\"] h2, html[data-bench-theme=\"white\"] h3 { color: #2A2318 !important; }",
+  "html[data-bench-theme=\"white\"] h1 .tag, html[data-bench-theme=\"white\"] h3, html[data-bench-theme=\"white\"] p.hint, html[data-bench-theme=\"white\"] .entry-layer .layer-name, html[data-bench-theme=\"white\"] .case-row .status { color: #555 !important; opacity: 1 !important; }",
+  "html[data-bench-theme=\"white\"] h2 { border-bottom-color: #ddd !important; }",
+  "html[data-bench-theme=\"white\"] .spine { border-left-color: #ddd !important; }",
+  "html[data-bench-theme=\"white\"] .spine .card::before { background: #2A2318 !important; border-color: #fff !important; }",
+  "html[data-bench-theme=\"white\"] .ticker, html[data-bench-theme=\"white\"] .case-row { border-color: #ddd !important; }",
+  "html[data-bench-theme=\"white\"] .entry-layer { border-left-color: #ddd !important; }",
+  "html[data-bench-theme=\"white\"] a { color: #315d7a !important; }",
+  "html[data-bench-theme=\"white\"] button, html[data-bench-theme=\"white\"] input[type=\"submit\"] { background: #2A2318 !important; color: #fff !important; border: 1px solid #2A2318 !important; }",
+  "html[data-bench-theme=\"white\"] input[type=\"text\"], html[data-bench-theme=\"white\"] input[type=\"date\"], html[data-bench-theme=\"white\"] input[type=\"password\"], html[data-bench-theme=\"white\"] input[type=\"file\"], html[data-bench-theme=\"white\"] textarea, html[data-bench-theme=\"white\"] select { background: #fff !important; color: #2A2318 !important; border-color: #bbb !important; }",
+  "html[data-bench-theme=\"white\"] .card { background: #fff !important; color: #2A2318 !important; border-color: #ddd !important; }",
+  "html[data-bench-theme=\"white\"] .error { color: #7A2E1E !important; }",
+  "html[data-bench-theme=\"white\"] .upcoming { border-left-color: #7A2E1E !important; background: #fafafa !important; }"
+].join("\n");
+
+export function benchWorkingPage(title, body, options = {}) {
+  const html = benchPage(title, body, options);
+  const themed = html.replace(/<html([^>]*)>/, (_match, attrs) => "<html" + attrs + ' data-bench-theme="white">');
+  return themed.replace("</head>", "<style>" + WORKING_WHITE_STYLE + "</style></head>");
+}

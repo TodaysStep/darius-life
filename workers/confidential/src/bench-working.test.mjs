@@ -81,6 +81,18 @@ test("GET /bench/ without a token is forbidden and never touches D1", async () =
   assert.equal(fakeD1.tables.cases.length, 0);
 });
 
+test("the private working docket uses a white reading surface", async () => {
+  const { token, jwk } = await validToken();
+  const { env } = setup(jwk);
+  const url = "https://darius.life/bench/";
+  const res = await handleBenchGet(authedRequest(url, token), env, new URL(url));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /data-bench-theme="white"/);
+  assert.match(html, /Bench Notes working surface: white/);
+  assert.match(html, /background:\s*#fff\s*!important/i);
+});
+
 test("POST /bench/ with a valid token creates a case, then it shows up on GET /bench/", async () => {
   const { token, jwk } = await validToken();
   const { env } = setup(jwk);

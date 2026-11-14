@@ -2,17 +2,21 @@ name: Build, deploy, and verify darius.life
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # A queued older release must never overwrite a newer evidence-preservation
   # repair. The latest run still executes every validation gate.
   cancel-in-progress: true
 jobs:
   evidence-tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,9 +27,12 @@ jobs:
       - name: Verify recovered runtime build and baseline guards
         run: node --test scripts/build-worker-runtime.test.mjs scripts/verify-worker-baseline.test.mjs workers/confidential/src/bench-frontdoor.test.mjs workers/confidential/src/index.test.mjs
       - name: Verify evidence preservation and authorization
-        run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs
+        run: node --test workers/shared/bench-evidence.test.mjs workers/shared/bench-evidence-receipts.test.mjs workers/shared/bench-rich-text.test.mjs workers/shared/bench-crypto.test.mjs workers/confidential/src/bench-entrusted.test.mjs workers/confidential/src/bench-entrusted-evidence.test.mjs workers/confidential/src/bench-evidence-room.test.mjs workers/confidential/src/bench-working.test.mjs
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     needs: evidence-tests
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +54,7 @@ jobs:
           path: dist
 
   deploy-pages:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -57,6 +65,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
   deploy-worker:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -79,6 +88,7 @@ jobs:
           command: deploy --keep-vars
 
   deploy-confidential-worker:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -102,6 +112,7 @@ jobs:
           command: deploy --keep-vars
 
   verify-live:
+    if: github.event_name == 'push'
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
     # regression fails this job, which fails the workflow, which notifies. The
     # daily-only run (verify-live.yml) is the one that reports without blocking.
