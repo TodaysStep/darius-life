@@ -2,12 +2,14 @@ name: Build, deploy, and verify darius.life
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # A queued older release must never overwrite a newer evidence-preservation
   # repair. The latest run still executes every validation gate.
   cancel-in-progress: true
@@ -47,6 +49,7 @@ jobs:
           path: dist
 
   deploy-pages:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -57,6 +60,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
   deploy-worker:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -79,6 +83,7 @@ jobs:
           command: deploy --keep-vars
 
   deploy-confidential-worker:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -102,6 +107,7 @@ jobs:
           command: deploy --keep-vars
 
   verify-live:
+    if: github.event_name == 'push'
     # Brief v2.1 check 18: gates the workflow. No continue-on-error here — a live
     # regression fails this job, which fails the workflow, which notifies. The
     # daily-only run (verify-live.yml) is the one that reports without blocking.
