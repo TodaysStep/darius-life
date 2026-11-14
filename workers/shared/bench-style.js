@@ -222,7 +222,7 @@ const WORKING_WHITE_STYLE = [
   "html[data-bench-theme=\"white\"] .card { background: #fff !important; color: #2A2318 !important; border-color: #ddd !important; }",
   "html[data-bench-theme=\"white\"] .error { color: #7A2E1E !important; }",
   "html[data-bench-theme=\"white\"] .upcoming { border-left-color: #7A2E1E !important; background: #fafafa !important; }"
-].join("\\n");
+].join("\n");
 
 export function benchWorkingPage(title, body, options = {}) {
   const html = benchPage(title, body, options);
