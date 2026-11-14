@@ -35,7 +35,7 @@ import { renderEvidenceText } from '../../shared/bench-rich-text.js';
 // declare an explicit script-src 'self' CSP override for exactly that
 // reason — every other page in Bench Notes keeps script-src 'none'.
 import { requireAccess } from "../../shared/access.js";
-import { escapeHtml, headers, benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
+import { escapeHtml, headers, benchWorkingPage as benchPage, STENOTYPE_ICON } from "../../shared/bench-style.js";
 import { sha256Hex } from "../../shared/bench-crypto.js";
 import * as data from "../../shared/bench-data.js";
 import { listSharedDocuments, listNotesForCases, listSharedEntries, renderEntrustedView } from "../../shared/bench-entrusted-view.js";
